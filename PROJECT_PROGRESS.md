@@ -4,8 +4,8 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Current state
 
-- **Phase:** 1 in progress. 1.1–1.5 are done.
-- **Next step:** Phase 1.6. Parsing and chunking: extract text from .md/.txt/.pdf (choose and explain a PDF library), chunking strategies (size, overlap, structure-aware), a `chunks` table + migration, and a pure function `document → chunks` with unit tests. Run it synchronously first; background jobs come in 1.7.
+- **Phase:** 1 in progress. 1.1–1.5 and 1.6a are done.
+- **Next step:** Phase 1.6b. A `chunks` table + migration (FK to documents with ON DELETE CASCADE, chunk_index, text, heading, page_number), an `ingest_document` service (status pending → processing → ready/failed, with error saved), triggered after upload with FastAPI `BackgroundTasks` (show its limits, which motivates Redis in 1.7), plus `GET /documents/{id}/chunks`.
 
 ## Completed milestones
 
@@ -24,6 +24,7 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 - [x] 1.3 `app/db.py`: async engine (asyncpg) created in the FastAPI `lifespan`, injected via `Depends(get_engine)`, `pool_pre_ping`, 5s connect timeout; `GET /health/ready` returns 503 when the DB is down; `integration` pytest marker (2026-11-04)
 - [x] 1.4 Alembic (async template, URL from Settings, date-prefixed files); `app/models.py` with `Base` + naming convention + `Document`; migrations `b7598770d98e` (vector extension) and `b914679628b7` (documents table); verified constraints and the downgrade/upgrade round trip (2026-11-04)
 - [x] 1.5 `app/documents/` (router, service, schemas): `POST /documents` (multipart, content-addressed storage in `data/uploads/<sha256>`, 201/400/409/413/415), `GET /documents`, `GET /documents/{id}`; `get_session` dependency; `tests/conftest.py` with an isolated `contextos_test` DB + temp upload dir; 14 tests pass (2026-11-05)
+- [x] 1.6a `app/ingestion/extract.py` (md split by heading path, ignoring `#` inside code fences; txt; pdf per page via pypdf; normalization incl. NUL removal; `ExtractionError`) and `app/ingestion/chunking.py` (structure-aware, recursive paragraph → sentence → word split, overlap; defaults 1500/200 chars); 15 unit tests, 29 total (2026-11-05)
 
 ## Pending (Phase 1)
 - [ ] Parsing, text extraction, chunking, metadata
@@ -58,12 +59,17 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | Blocking file I/O runs via `run_in_threadpool` | Keeps the event loop free |
 | Tests use DB `contextos_test` (env override in conftest) and TRUNCATE before each test | Tests can never touch dev data |
 | Known limit: Starlette spools the whole upload before our size check | Enforce the body size at the reverse proxy in Phase 9 |
+| pypdf for PDFs (not PyMuPDF) | Pure Python, BSD license; PyMuPDF is AGPL. Scanned PDFs are rejected (no OCR yet). |
+| Chunk sizes in characters (1500 max, 200 overlap) | No tokenizer until Phase 2; ~4 chars/token; tune in Phase 8 |
+| Chunks never cross headings or pages | Precise citations. Observed: small Markdown sections make tiny chunks (31 chars in CLAUDE.md). Plan: prepend the heading path when embedding (Phase 2); measure merging in Phase 8. |
 
 ## Environment notes
-- Develop inside WSL Ubuntu 24.04. Open the project with `code .` from the Ubuntu terminal.
+- Develop inside WSL Ubuntu 24.04. IDE: **Antigravity IDE**. Open the project via Command Palette → `Remote-WSL: Connect to WSL using Distro...` → Ubuntu-24.04 → open `/home/aabhinavvvvvvv/personal_projects/contextOS`. Install the Python and Pyrefly extensions "in WSL", then select the interpreter `backend/.venv/bin/python`.
+- Docker Desktop must be running (WSL reports "docker could not be found" otherwise), then `docker compose up -d`.
+- Workflow: Claude writes and runs the code and commits + pushes after each milestone. Before every push, scan git history for the `.env` password (print only lengths, never values).
 - Docker Desktop on Windows with WSL integration.
 - Python 3.12.3, uv 0.6.3, Node 22 (nvm), npm. pnpm is broken; use npm.
 
 ## Learning notes
 - The user prefers that Claude writes the code and runs the commands, explaining each file, syntax and output. Quizzes are optional.
-- Covered so far: client/server, ports and port mapping, Git internals (snapshots, staging, commits, branches, remotes, SSH), `.gitignore` syntax, env vars, Docker images/containers/volumes/health checks, Compose, venvs, pyproject/lockfiles, uv, HTTP (methods, status codes, headers, bodies), JSON, REST, ASGI/uvicorn/FastAPI roles, decorators and routing, Pydantic response models, OpenAPI/docs, TestClient, pydantic-settings, fail-fast config, SecretStr, `lru_cache`, `pathlib`, pytest `monkeypatch` / `raises`, async/await and the event loop, `async with`, connection pools, SQLAlchemy engine/URL/`text()`, lifespan and `yield`, dependency injection (`Depends`, `Annotated`), liveness vs readiness, timeouts, zombie processes, `pkill -f` self-match, tables/columns/types/keys, constraints (NOT NULL, UNIQUE, CHECK), indexes, ORM, `DeclarativeBase` / `Mapped` / `mapped_column`, `default` vs `server_default`, naming conventions, migrations / revision chain / `alembic_version`, autogenerate + review, `alembic check`, transactions and ROLLBACK, multipart/form-data, `UploadFile`, sessions as units of work, `expire_on_commit`, `yield` dependencies and sub-dependencies, `APIRouter`/`include_router`, path and query parameters with validation, `HTTPException`, custom exceptions, `@dataclass(frozen=True)`, the walrus operator `:=`, hashing (SHA-256), atomic rename, `run_in_threadpool`, the race between check-then-insert, pytest fixtures/scopes/`conftest.py`/`pytestmark`, UTC timestamps.
+- Covered so far: client/server, ports and port mapping, Git internals (snapshots, staging, commits, branches, remotes, SSH), `.gitignore` syntax, env vars, Docker images/containers/volumes/health checks, Compose, venvs, pyproject/lockfiles, uv, HTTP (methods, status codes, headers, bodies), JSON, REST, ASGI/uvicorn/FastAPI roles, decorators and routing, Pydantic response models, OpenAPI/docs, TestClient, pydantic-settings, fail-fast config, SecretStr, `lru_cache`, `pathlib`, pytest `monkeypatch` / `raises`, async/await and the event loop, `async with`, connection pools, SQLAlchemy engine/URL/`text()`, lifespan and `yield`, dependency injection (`Depends`, `Annotated`), liveness vs readiness, timeouts, zombie processes, `pkill -f` self-match, tables/columns/types/keys, constraints (NOT NULL, UNIQUE, CHECK), indexes, ORM, `DeclarativeBase` / `Mapped` / `mapped_column`, `default` vs `server_default`, naming conventions, migrations / revision chain / `alembic_version`, autogenerate + review, `alembic check`, transactions and ROLLBACK, multipart/form-data, `UploadFile`, sessions as units of work, `expire_on_commit`, `yield` dependencies and sub-dependencies, `APIRouter`/`include_router`, path and query parameters with validation, `HTTPException`, custom exceptions, `@dataclass(frozen=True)`, the walrus operator `:=`, hashing (SHA-256), atomic rename, `run_in_threadpool`, the race between check-then-insert, pytest fixtures/scopes/`conftest.py`/`pytestmark`, UTC timestamps, PDF internals, text encodings/UTF-8/BOM, regex (anchors, groups, lazy `+?`, lookbehind), closures, generators (`yield`, `yield from`, `Iterator`), slicing (`del lst[i:]`), chunking strategies, `pytest.mark.parametrize`, `PYTHONPATH` / how Python finds modules, dependency licenses.
