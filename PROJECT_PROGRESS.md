@@ -4,8 +4,8 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Current state
 
-- **Phase:** 1 in progress. 1.1 and 1.2 are done.
-- **Next step:** Phase 1.3. Teach async/await and the event loop, then connect to Postgres with SQLAlchemy async + asyncpg (a `database_url` built from Settings) and add a DB check.
+- **Phase:** 1 in progress. 1.1–1.3 are done.
+- **Next step:** Phase 1.4. Teach relational schema design, ORM models and migrations, then set up Alembic, enable the `vector` extension in the first migration, and create the `documents` table.
 
 ## Completed milestones
 
@@ -21,9 +21,10 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 ### Phase 1: Backend and document ingestion
 - [x] 1.1 FastAPI app (`app/main.py`), `GET /health` with Pydantic response model, TestClient tests (2026-11-04)
 - [x] 1.2 `app/config.py`: typed `Settings` (pydantic-settings) reading the repo-root `.env`, `SecretStr` password, cached `get_settings()` (2026-11-04)
+- [x] 1.3 `app/db.py`: async engine (asyncpg) created in the FastAPI `lifespan`, injected via `Depends(get_engine)`, `pool_pre_ping`, 5s connect timeout; `GET /health/ready` returns 503 when the DB is down; `integration` pytest marker (2026-11-04)
 
 ## Pending (Phase 1)
-- [ ] PostgreSQL connection (SQLAlchemy async) + migrations (Alembic), enable `vector` extension
+- [ ] Migrations (Alembic), enable `vector` extension, `documents` table
 - [ ] Document upload endpoint
 - [ ] Parsing, text extraction, chunking, metadata
 - [ ] Background processing via Redis queue
@@ -41,6 +42,10 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | `httpx2` (not `httpx`) as the test-client dependency | Starlette 1.x deprecates `httpx` for its TestClient |
 | One `.env` at repo root, located via `Path(__file__)` | Shared by Compose and backend; works from any working directory |
 | `SecretStr` for passwords and keys | Masked in repr/logs; requires explicit `.get_secret_value()` |
+| Separate liveness (`/health`) and readiness (`/health/ready`) | A DB outage should stop traffic, not trigger app restarts |
+| `pool_pre_ping=True` | Observed stale pooled connections failing requests after a Postgres restart |
+| Engine in `lifespan` + `Depends`, not a module global | Clean startup/shutdown; tests swap it via `dependency_overrides` |
+| Integration tests marked `@pytest.mark.integration` | `pytest -m "not integration"` runs without Docker |
 
 ## Environment notes
 - Develop inside WSL Ubuntu 24.04. Open the project with `code .` from the Ubuntu terminal.
@@ -49,4 +54,4 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Learning notes
 - The user prefers that Claude writes the code and runs the commands, explaining each file, syntax and output. Quizzes are optional.
-- Covered so far: client/server, ports and port mapping, Git internals (snapshots, staging, commits, branches, remotes, SSH), `.gitignore` syntax, env vars, Docker images/containers/volumes/health checks, Compose, venvs, pyproject/lockfiles, uv, HTTP (methods, status codes, headers, bodies), JSON, REST, ASGI/uvicorn/FastAPI roles, decorators and routing, Pydantic response models, OpenAPI/docs, TestClient, pydantic-settings, fail-fast config, SecretStr, `lru_cache`, `pathlib`, pytest `monkeypatch` / `raises`.
+- Covered so far: client/server, ports and port mapping, Git internals (snapshots, staging, commits, branches, remotes, SSH), `.gitignore` syntax, env vars, Docker images/containers/volumes/health checks, Compose, venvs, pyproject/lockfiles, uv, HTTP (methods, status codes, headers, bodies), JSON, REST, ASGI/uvicorn/FastAPI roles, decorators and routing, Pydantic response models, OpenAPI/docs, TestClient, pydantic-settings, fail-fast config, SecretStr, `lru_cache`, `pathlib`, pytest `monkeypatch` / `raises`, async/await and the event loop, `async with`, connection pools, SQLAlchemy engine/URL/`text()`, lifespan and `yield`, dependency injection (`Depends`, `Annotated`), liveness vs readiness, timeouts, zombie processes, `pkill -f` self-match.

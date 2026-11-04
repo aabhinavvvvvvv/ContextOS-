@@ -3,10 +3,33 @@
 Run locally (from backend/):  uv run uvicorn app.main:app --reload
 """
 
-from fastapi import FastAPI
-from pydantic import BaseModel
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Annotated
 
-app = FastAPI(title="ContextOS API", version="0.1.0")
+from fastapi import Depends, FastAPI, Response, status
+from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from app.config import get_settings
+from app.db import create_db_engine, get_engine
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Startup: create one connection pool for the whole process.
+    app.state.db_engine = create_db_engine(get_settings())
+    yield
+    # Shutdown: close every pooled connection cleanly.
+    await app.state.db_engine.dispose()
+
+
+app = FastAPI(title="ContextOS API", version="0.1.0", lifespan=lifespan)
 
 
 class HealthResponse(BaseModel):
@@ -14,7 +37,28 @@ class HealthResponse(BaseModel):
     version: str
 
 
+class ReadinessResponse(BaseModel):
+    status: str
+    database: str
+
+
 @app.get("/health")
 async def health() -> HealthResponse:
     """Liveness check: the process is up and able to serve requests."""
     return HealthResponse(status="ok", version=app.version)
+
+
+@app.get("/health/ready")
+async def readiness(
+    response: Response,
+    engine: Annotated[AsyncEngine, Depends(get_engine)],
+) -> ReadinessResponse:
+    """Readiness check: the services the app depends on (currently Postgres) are reachable."""
+    try:
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+    except (SQLAlchemyError, OSError):
+        logger.warning("Database readiness check failed", exc_info=True)
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return ReadinessResponse(status="unavailable", database="unreachable")
+    return ReadinessResponse(status="ok", database="ok")
