@@ -24,10 +24,19 @@ class Settings(BaseSettings):
 
     redis_host: str = "localhost"
     redis_port: int = 6379
+    queue_name: str = "contextos"
+
+    log_level: str = "INFO"
 
     # Uploaded files are stored here, named by their SHA-256 hash.
     upload_dir: Path = REPO_ROOT / "data" / "uploads"
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
+
+    @property
+    def redis_url(self) -> str:
+        # Fail fast (2s) if Redis is unreachable. No socket_timeout: the worker's
+        # blocking "wait for the next job" reads must be allowed to wait longer.
+        return f"redis://{self.redis_host}:{self.redis_port}/0?socket_connect_timeout=2"
 
 
 @lru_cache

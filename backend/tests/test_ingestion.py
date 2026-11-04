@@ -20,7 +20,7 @@ REST, not GraphQL.
 
 
 def upload_and_fetch(client: TestClient, filename: str, content: bytes) -> dict:
-    """Upload, then re-read the document. TestClient waits for background tasks to finish."""
+    """Upload, then re-read the document. In tests the job runs inline (InlineJobQueue)."""
     created = client.post("/documents", files={"file": (filename, content)})
     assert created.status_code == 201
     assert created.json()["status"] == "pending"  # the response is sent before ingestion runs

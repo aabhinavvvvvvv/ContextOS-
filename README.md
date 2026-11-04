@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 1 in progress** (backend and document ingestion). See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 1 complete** (backend and document ingestion). Next: Phase 2, embeddings and RAG. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -24,7 +24,9 @@ FastAPI backend ──► LangGraph agent ──► LLM provider / MCP connector
 backend/             FastAPI application (Python 3.12, managed by uv)
   app/               application package
     documents/       upload and listing (router → service → models)
-    ingestion/       extract text (md/txt/pdf) → chunk → save; runs after upload
+    ingestion/       extract text (md/txt/pdf) → chunk → save
+    jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
+    worker.py        background worker process: runs ingestion jobs, re-queues unfinished documents
   migrations/        Alembic database migrations
   tests/             pytest tests (integration tests use a separate contextos_test database)
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
@@ -50,7 +52,12 @@ uv sync                         # create .venv and install locked dependencies
 uv run alembic upgrade head     # apply database migrations
 uv run pytest                   # run tests (-m "not integration" to skip DB tests)
 uv run uvicorn app.main:app --reload   # API on http://localhost:8000, docs at /docs
+
+# 4. Worker (second terminal, from backend/): processes uploaded documents
+uv run saq app.worker.worker_settings
 ```
+
+Uploads are saved immediately and ingested by the worker. If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
 
 ## API
 
@@ -72,8 +79,8 @@ curl -F "file=@notes.md" http://localhost:8000/documents
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Foundations and project setup | ✅ |
-| 1 | FastAPI backend, document ingestion, PostgreSQL | ⏳ next |
-| 2 | Embeddings, hybrid retrieval, grounded answers with citations | |
+| 1 | FastAPI backend, document ingestion, PostgreSQL, background worker | ✅ |
+| 2 | Embeddings, hybrid retrieval, grounded answers with citations | ⏳ next |
 | 3 | Persistent memory | |
 | 4 | Agentic workflows with LangGraph | |
 | 5 | Live connectors (GitHub, local docs) and MCP | |

@@ -1,6 +1,8 @@
 """FastAPI application entry point.
 
 Run locally (from backend/):  uv run uvicorn app.main:app --reload
+Uploaded documents are ingested by the worker, a separate process:
+    uv run saq app.worker.worker_settings
 """
 
 import logging
@@ -17,16 +19,24 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.db import create_db_engine, get_engine
 from app.documents.router import router as documents_router
+from app.jobs import JobQueue, create_saq_queue
+from app.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # Startup: create one connection pool for the whole process.
-    app.state.db_engine = create_db_engine(get_settings())
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    # Startup: one database connection pool and one queue connection for the whole process.
+    app.state.db_engine = create_db_engine(settings)
+    saq_queue = create_saq_queue(settings)
+    await saq_queue.connect()  # lazy: does not fail if Redis is down right now
+    app.state.job_queue = JobQueue(saq_queue)
     yield
-    # Shutdown: close every pooled connection cleanly.
+    # Shutdown: close connections cleanly.
+    await saq_queue.disconnect()
     await app.state.db_engine.dispose()
 
 

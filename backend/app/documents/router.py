@@ -1,22 +1,25 @@
 """HTTP routes for documents: translate requests to service calls and errors to status codes."""
 
+import logging
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.db import get_engine, get_session
+from app.db import get_session
 from app.documents import service
 from app.documents.schemas import ChunkRead, DocumentRead
-from app.ingestion.service import ingest_document
+from app.jobs import JobQueue, get_job_queue
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
-EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
+JobQueueDep = Annotated[JobQueue, Depends(get_job_queue)]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -24,10 +27,9 @@ async def upload_document(
     file: UploadFile,
     session: SessionDep,
     settings: SettingsDep,
-    engine: EngineDep,
-    background_tasks: BackgroundTasks,
+    job_queue: JobQueueDep,
 ) -> DocumentRead:
-    """Upload a .md, .txt or .pdf file. It is stored and ingested in the background.
+    """Upload a .md, .txt or .pdf file. It is stored and ingested by the background worker.
 
     The response shows status `pending`; poll `GET /documents/{id}` until `ready` or `failed`.
     """
@@ -58,9 +60,12 @@ async def upload_document(
             status.HTTP_409_CONFLICT,
             {"message": "This file was already uploaded", "document_id": str(exc.existing.id)},
         )
-    # Runs after the response is sent, in this same process. Not durable: if the server
-    # stops before it runs, the document stays "pending". A Redis job queue fixes this (1.7).
-    background_tasks.add_task(ingest_document, engine, document.id, settings.upload_dir)
+    try:
+        await job_queue.enqueue_ingestion(document.id)
+    except Exception:
+        # Never fail an upload because the queue is down: the document is already saved
+        # as "pending", and the worker's periodic sweep will queue it later.
+        logger.exception("Could not enqueue ingestion for document %s", document.id)
     return DocumentRead.model_validate(document)
 
 
