@@ -7,7 +7,8 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # app/config.py -> parents[0] = app/, parents[1] = backend/, parents[2] = repository root
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = REPO_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -23,6 +24,10 @@ class Settings(BaseSettings):
 
     redis_host: str = "localhost"
     redis_port: int = 6379
+
+    # Uploaded files are stored here, named by their SHA-256 hash.
+    upload_dir: Path = REPO_ROOT / "data" / "uploads"
+    max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
 
 
 @lru_cache

@@ -1,8 +1,11 @@
 """Database engine setup (SQLAlchemy async + asyncpg)."""
 
-from fastapi import Request
+from collections.abc import AsyncIterator
+from typing import Annotated
+
+from fastapi import Depends, Request
 from sqlalchemy import URL
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
 from app.config import Settings
 
@@ -33,3 +36,13 @@ def create_db_engine(settings: Settings) -> AsyncEngine:
 def get_engine(request: Request) -> AsyncEngine:
     """FastAPI dependency: the engine created at startup (see lifespan in main.py)."""
     return request.app.state.db_engine
+
+
+async def get_session(
+    engine: Annotated[AsyncEngine, Depends(get_engine)],
+) -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency: one database session per request, closed when the request ends."""
+    # expire_on_commit=False keeps loaded attributes readable after commit. Otherwise
+    # SQLAlchemy would reload them implicitly, which is an error in async code.
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        yield session

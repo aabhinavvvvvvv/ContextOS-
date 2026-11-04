@@ -38,10 +38,8 @@ def test_readiness_returns_503_when_database_unreachable() -> None:
 
 
 @pytest.mark.integration
-def test_readiness_ok_when_database_reachable() -> None:
-    # `with` runs the app's lifespan, which builds the real engine from .env.
-    with TestClient(app) as client:
-        response = client.get("/health/ready")
+def test_readiness_ok_when_database_reachable(client: TestClient) -> None:
+    response = client.get("/health/ready")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "database": "ok"}
