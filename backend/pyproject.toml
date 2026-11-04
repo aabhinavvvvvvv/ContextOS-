@@ -3,7 +3,10 @@ name = "contextos-backend"
 version = "0.1.0"
 description = "ContextOS API: agentic RAG over live data and persistent memory"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [tool.pytest.ini_options]
 # Let tests do `import app` when pytest runs from backend/.
@@ -12,5 +15,6 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0",
     "pytest>=9.2.0",
 ]
