@@ -3,25 +3,34 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.config import Settings, get_settings
-from app.db import get_session
+from app.db import get_engine, get_session
 from app.documents import service
-from app.documents.schemas import DocumentRead
+from app.documents.schemas import ChunkRead, DocumentRead
+from app.ingestion.service import ingest_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_document(
-    file: UploadFile, session: SessionDep, settings: SettingsDep
+    file: UploadFile,
+    session: SessionDep,
+    settings: SettingsDep,
+    engine: EngineDep,
+    background_tasks: BackgroundTasks,
 ) -> DocumentRead:
-    """Upload a .md, .txt or .pdf file. It is stored and queued for ingestion (status `pending`)."""
+    """Upload a .md, .txt or .pdf file. It is stored and ingested in the background.
+
+    The response shows status `pending`; poll `GET /documents/{id}` until `ready` or `failed`.
+    """
     if not file.filename:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Uploaded file has no filename")
     try:
@@ -49,6 +58,9 @@ async def upload_document(
             status.HTTP_409_CONFLICT,
             {"message": "This file was already uploaded", "document_id": str(exc.existing.id)},
         )
+    # Runs after the response is sent, in this same process. Not durable: if the server
+    # stops before it runs, the document stays "pending". A Redis job queue fixes this (1.7).
+    background_tasks.add_task(ingest_document, engine, document.id, settings.upload_dir)
     return DocumentRead.model_validate(document)
 
 
@@ -67,3 +79,12 @@ async def read_document(document_id: uuid.UUID, session: SessionDep) -> Document
     if document is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
     return DocumentRead.model_validate(document)
+
+
+@router.get("/{document_id}/chunks")
+async def read_document_chunks(document_id: uuid.UUID, session: SessionDep) -> list[ChunkRead]:
+    """The document's chunks in reading order (empty until ingestion is `ready`)."""
+    if await service.get_document(session, document_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
+    chunks = await service.list_chunks(session, document_id)
+    return [ChunkRead.model_validate(chunk) for chunk in chunks]

@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from app.models import Document
+from app.models import Document, DocumentChunk
 
 # File extensions we can parse (Phase 1.6), mapped to the content type we record.
 SUPPORTED_TYPES = {
@@ -123,3 +123,12 @@ async def list_documents(session: AsyncSession, *, limit: int) -> list[Document]
 
 async def get_document(session: AsyncSession, document_id: uuid.UUID) -> Document | None:
     return await session.get(Document, document_id)
+
+
+async def list_chunks(session: AsyncSession, document_id: uuid.UUID) -> list[DocumentChunk]:
+    result = await session.scalars(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    return list(result)

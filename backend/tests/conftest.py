@@ -49,7 +49,9 @@ async def _empty_tables() -> None:
     engine = create_async_engine(build_database_url(get_settings()))
     try:
         async with engine.begin() as connection:
-            await connection.execute(text("TRUNCATE documents"))
+            # Both tables in one statement: Postgres refuses to truncate a table that
+            # another table's foreign key points at, unless they're truncated together.
+            await connection.execute(text("TRUNCATE documents, chunks"))
     finally:
         await engine.dispose()
 

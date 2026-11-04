@@ -24,6 +24,7 @@ FastAPI backend ──► LangGraph agent ──► LLM provider / MCP connector
 backend/             FastAPI application (Python 3.12, managed by uv)
   app/               application package
     documents/       upload and listing (router → service → models)
+    ingestion/       extract text (md/txt/pdf) → chunk → save; runs after upload
   migrations/        Alembic database migrations
   tests/             pytest tests (integration tests use a separate contextos_test database)
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
@@ -59,7 +60,8 @@ uv run uvicorn app.main:app --reload   # API on http://localhost:8000, docs at /
 | `GET` | `/health/ready` | Readiness: Postgres is reachable (503 if not) |
 | `POST` | `/documents` | Upload a `.md`, `.txt` or `.pdf` file (multipart field `file`). 201, or 409 for duplicates, 413 too large, 415 unsupported type |
 | `GET` | `/documents?limit=50` | List documents, newest first |
-| `GET` | `/documents/{id}` | One document (404 if unknown) |
+| `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
+| `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
 
 ```bash
 curl -F "file=@notes.md" http://localhost:8000/documents

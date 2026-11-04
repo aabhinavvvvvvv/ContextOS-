@@ -70,6 +70,9 @@ def test_list_returns_newest_first(client: TestClient) -> None:
 def test_get_document_by_id(client: TestClient) -> None:
     created = upload(client, "notes.md", NOTES).json()
 
-    assert client.get(f"/documents/{created['id']}").json() == created
+    fetched = client.get(f"/documents/{created['id']}").json()
+    # status/updated_at change after upload (background ingestion), so compare stable fields.
+    stable = ("id", "filename", "sha256", "size_bytes", "created_at")
+    assert {k: fetched[k] for k in stable} == {k: created[k] for k in stable}
     assert client.get(f"/documents/{uuid.uuid4()}").status_code == 404
     assert client.get("/documents/not-a-uuid").status_code == 422
