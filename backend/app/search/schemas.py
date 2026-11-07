@@ -1,6 +1,7 @@
 """API shapes for search results."""
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -20,4 +21,5 @@ class SearchResult(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str
+    mode: Literal["semantic", "keyword"]
     results: list[SearchResult]

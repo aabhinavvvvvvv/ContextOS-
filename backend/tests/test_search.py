@@ -59,9 +59,54 @@ def test_search_with_no_documents_returns_empty_results(client: TestClient) -> N
     assert search(client, "anything") == []
 
 
+def keyword(client: TestClient, q: str) -> list[dict]:
+    response = client.get("/search", params={"q": q, "mode": "keyword"})
+    assert response.status_code == 200
+    assert response.json()["mode"] == "keyword"
+    return response.json()["results"]
+
+
+def test_keyword_search_matches_word_stems(client: TestClient) -> None:
+    upload(client, "ops.md", b"# Operations\nThe worker runs ingestion jobs.\n\n# UI\nReact components.\n")
+
+    # "workers" -> worker, "running" -> run: different words, same stems.
+    assert [hit["heading"] for hit in keyword(client, "workers running")] == ["Operations"]
+
+
+def test_keyword_matches_in_the_heading_rank_higher(client: TestClient) -> None:
+    upload(
+        client,
+        "db.md",
+        b"# Notes\nWe chose pgvector for storage.\n\n# pgvector\nIt adds a vector type.\n",
+    )
+
+    # Heading words are weighted A, body words B.
+    assert [hit["heading"] for hit in keyword(client, "pgvector")] == ["pgvector", "Notes"]
+
+
+def test_keyword_search_supports_exclusions_and_phrases(client: TestClient) -> None:
+    upload(client, "api.md", b"# API\nREST, not GraphQL.\n\n# Cache\nREST responses are cached.\n")
+
+    assert [hit["heading"] for hit in keyword(client, "rest -graphql")] == ["Cache"]
+    assert [hit["heading"] for hit in keyword(client, '"responses are cached"')] == ["Cache"]
+
+
+def test_keyword_search_of_only_stop_words_matches_nothing(client: TestClient) -> None:
+    upload(client, "notes.md", NOTES)
+
+    assert keyword(client, "the and of") == []
+
+
 @pytest.mark.parametrize(
     "params",
-    [{}, {"q": ""}, {"q": "x" * 501}, {"q": "ok", "limit": 0}, {"q": "ok", "limit": 51}],
+    [
+        {},
+        {"q": ""},
+        {"q": "x" * 501},
+        {"q": "ok", "limit": 0},
+        {"q": "ok", "limit": 51},
+        {"q": "ok", "mode": "fuzzy"},
+    ],
 )
 def test_invalid_search_parameters_return_422(client: TestClient, params: dict) -> None:
     assert client.get("/search", params=params).status_code == 422
