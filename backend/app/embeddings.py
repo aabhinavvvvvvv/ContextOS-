@@ -13,8 +13,6 @@ and it reads up to 512 tokens, enough for our ~375-token chunks.
 from collections.abc import Sequence
 from pathlib import Path
 
-from fastembed import TextEmbedding
-
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM = 384
 
@@ -26,6 +24,10 @@ class Embedder:
     """
 
     def __init__(self, cache_dir: Path) -> None:
+        # Imported here, not at the top: fastembed takes ~0.5s to import, and modules that
+        # only need EMBEDDING_DIM (app.models, so also Alembic and every test) shouldn't pay it.
+        from fastembed import TextEmbedding
+
         self._model = TextEmbedding(EMBEDDING_MODEL, cache_dir=str(cache_dir))
 
     def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:

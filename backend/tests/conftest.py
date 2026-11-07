@@ -24,6 +24,7 @@ from app.db import build_database_url
 from app.ingestion.service import ingest_document
 from app.jobs import get_job_queue
 from app.main import app
+from tests.helpers import FakeEmbedder
 
 TEST_UPLOAD_DIR = Path(tempfile.mkdtemp(prefix="contextos-test-uploads-"))
 os.environ["POSTGRES_DB"] = "contextos_test"
@@ -76,7 +77,9 @@ class InlineJobQueue:
         self.engine = engine
 
     async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:
-        await ingest_document(self.engine, document_id, get_settings().upload_dir)
+        await ingest_document(
+            self.engine, document_id, get_settings().upload_dir, FakeEmbedder()
+        )
         return True
 
 

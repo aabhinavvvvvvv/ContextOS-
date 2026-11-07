@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import create_db_engine
+from app.embeddings import Embedder
 from app.ingestion.service import ingest_document, unfinished_document_ids
 from app.jobs import JobQueue, create_saq_queue
 from app.logging_config import configure_logging
@@ -30,6 +31,8 @@ async def startup(ctx: Context) -> None:
     configure_logging(settings.log_level, replace_existing=True)
     ctx["settings"] = settings
     ctx["engine"] = create_db_engine(settings)
+    # Loaded once per worker process and shared by all jobs (ONNX Runtime is thread-safe).
+    ctx["embedder"] = Embedder(settings.model_cache_dir)
     await enqueue_unfinished_documents(ctx)
 
 
@@ -38,7 +41,9 @@ async def shutdown(ctx: Context) -> None:
 
 
 async def ingest_document_job(ctx: Context, *, document_id: str) -> None:
-    await ingest_document(ctx["engine"], uuid.UUID(document_id), ctx["settings"].upload_dir)
+    await ingest_document(
+        ctx["engine"], uuid.UUID(document_id), ctx["settings"].upload_dir, ctx["embedder"]
+    )
 
 
 async def enqueue_unfinished_documents(ctx: Context) -> None:

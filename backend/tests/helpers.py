@@ -1,5 +1,29 @@
 """Test helpers shared by several test files (fixtures live in conftest.py)."""
 
+import hashlib
+from collections.abc import Sequence
+
+from app.embeddings import EMBEDDING_DIM
+
+
+class FakeEmbedder:
+    """Stands in for app.embeddings.Embedder without loading a model.
+
+    Same text -> same vector (derived from its SHA-256), with the real dimension.
+    The numbers carry no meaning, so use the real model to test search quality.
+    """
+
+    def embed_passages(self, texts: Sequence[str]) -> list[list[float]]:
+        return [self.vector(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.vector(text)
+
+    @staticmethod
+    def vector(text: str) -> list[float]:
+        digest = hashlib.sha256(text.encode()).digest()  # 32 bytes
+        return [byte / 255 for byte in digest] * (EMBEDDING_DIM // len(digest))
+
 
 def make_pdf(page_texts: list[str]) -> bytes:
     """Build a minimal valid PDF with one line of text per page (no parentheses in text).

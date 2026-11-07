@@ -14,7 +14,8 @@ from app.jobs import JobQueue, create_saq_queue, get_job_queue
 from app.main import app
 from app.worker import shutdown, startup, worker_settings
 
-pytestmark = pytest.mark.integration
+# The real worker's startup loads the real embedding model.
+pytestmark = [pytest.mark.integration, pytest.mark.model]
 
 
 class DroppingJobQueue:

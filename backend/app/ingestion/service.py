@@ -1,6 +1,6 @@
-"""Ingestion job: turn a stored upload into chunks in the database.
+"""Ingestion job: turn a stored upload into embedded chunks in the database.
 
-Status flow: pending -> processing -> ready (chunks saved) or failed (error saved).
+Status flow: pending -> processing -> ready (chunks + embeddings saved) or failed (error saved).
 """
 
 import logging
@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.embeddings import Embedder, chunk_embedding_text
 from app.ingestion.chunking import Chunk, chunk_sections
 from app.ingestion.extract import ExtractionError, extract_sections
 from app.models import Document, DocumentChunk
@@ -20,13 +21,21 @@ logger = logging.getLogger(__name__)
 UNFINISHED_STATUSES = ("pending", "processing")
 
 
-def _build_chunks(path: Path, content_type: str) -> list[Chunk]:
-    """Blocking and CPU-heavy (PDF parsing), so it runs in a worker thread."""
-    return chunk_sections(extract_sections(path.read_bytes(), content_type))
+def _build_chunks(
+    path: Path, content_type: str, embedder: Embedder
+) -> list[tuple[Chunk, list[float]]]:
+    """Read, extract, chunk and embed. Blocking and CPU-heavy, so it runs in a worker thread."""
+    chunks = chunk_sections(extract_sections(path.read_bytes(), content_type))
+    vectors = embedder.embed_passages(
+        [chunk_embedding_text(chunk.heading, chunk.text) for chunk in chunks]
+    )
+    return list(zip(chunks, vectors, strict=True))
 
 
-async def ingest_document(engine: AsyncEngine, document_id: uuid.UUID, upload_dir: Path) -> None:
-    """Extract and chunk one document. Safe to call more than once (idempotent).
+async def ingest_document(
+    engine: AsyncEngine, document_id: uuid.UUID, upload_dir: Path, embedder: Embedder
+) -> None:
+    """Extract, chunk and embed one document. Safe to call more than once (idempotent).
 
     A document still in "processing" (its worker crashed mid-job) is processed again.
     That's safe: chunks and the "ready" status are committed together, so a crash
@@ -43,8 +52,8 @@ async def ingest_document(engine: AsyncEngine, document_id: uuid.UUID, upload_di
         await session.commit()
 
         try:
-            chunks = await run_in_threadpool(
-                _build_chunks, upload_dir / document.sha256, document.content_type
+            embedded_chunks = await run_in_threadpool(
+                _build_chunks, upload_dir / document.sha256, document.content_type, embedder
             )
         except (ExtractionError, OSError) as exc:
             # Expected failures: bad file content, or the stored file is missing.
@@ -63,13 +72,14 @@ async def ingest_document(engine: AsyncEngine, document_id: uuid.UUID, upload_di
                 text=chunk.text,
                 heading=chunk.heading,
                 page_number=chunk.page_number,
+                embedding=vector,
             )
-            for chunk in chunks
+            for chunk, vector in embedded_chunks
         )
         document.status = "ready"
         # One transaction: the chunks and the "ready" status are saved together or not at all.
         await session.commit()
-        logger.info("Ingested document %s into %d chunks", document_id, len(chunks))
+        logger.info("Ingested document %s into %d chunks", document_id, len(embedded_chunks))
 
 
 async def unfinished_document_ids(session: AsyncSession) -> list[uuid.UUID]:

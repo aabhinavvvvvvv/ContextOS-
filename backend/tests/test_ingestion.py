@@ -4,10 +4,14 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.config import get_settings
 from app.db import create_db_engine
 from app.ingestion.service import ingest_document
-from tests.helpers import make_pdf
+from app.models import DocumentChunk
+from tests.helpers import FakeEmbedder, make_pdf
 
 pytestmark = pytest.mark.integration
 
@@ -31,11 +35,40 @@ def run_ingestion(document_id: str) -> None:
     async def run() -> None:
         engine = create_db_engine(get_settings())
         try:
-            await ingest_document(engine, uuid.UUID(document_id), get_settings().upload_dir)
+            await ingest_document(
+                engine, uuid.UUID(document_id), get_settings().upload_dir, FakeEmbedder()
+            )
         finally:
             await engine.dispose()
 
     asyncio.run(run())
+
+
+def stored_embeddings(document_id: str) -> list[list[float]]:
+    async def run() -> list[list[float]]:
+        engine = create_db_engine(get_settings())
+        try:
+            async with AsyncSession(engine) as session:
+                vectors = await session.scalars(
+                    select(DocumentChunk.embedding)
+                    .where(DocumentChunk.document_id == uuid.UUID(document_id))
+                    .order_by(DocumentChunk.chunk_index)
+                )
+                return [list(vector) for vector in vectors]
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(run())
+
+
+def test_chunks_are_embedded_with_their_heading_path(client: TestClient) -> None:
+    document = upload_and_fetch(client, "notes.md", MARKDOWN)
+
+    # Postgres stores 32-bit floats, hence approx rather than exact equality.
+    assert stored_embeddings(document["id"]) == [
+        pytest.approx(FakeEmbedder.vector("Architecture\n\nWe use FastAPI."), abs=1e-6),
+        pytest.approx(FakeEmbedder.vector("Architecture > API\n\nREST, not GraphQL."), abs=1e-6),
+    ]
 
 
 def test_markdown_upload_becomes_ready_with_chunks(client: TestClient) -> None:

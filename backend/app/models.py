@@ -19,7 +19,10 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from app.embeddings import EMBEDDING_DIM
 
 # Give every constraint a predictable name, so later migrations can find and alter it.
 NAMING_CONVENTION = {
@@ -77,6 +80,8 @@ class DocumentChunk(Base):
     text: Mapped[str] = mapped_column(Text)
     heading: Mapped[str | None] = mapped_column(Text)
     page_number: Mapped[int | None]
+    # Embedding of chunk_embedding_text(heading, text); used for semantic search.
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
