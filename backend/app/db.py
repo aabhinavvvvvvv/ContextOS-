@@ -46,3 +46,7 @@ async def get_session(
     # SQLAlchemy would reload them implicitly, which is an error in async code.
     async with AsyncSession(engine, expire_on_commit=False) as session:
         yield session
+
+
+# Shorthand for route parameters: `session: SessionDep`.
+SessionDep = Annotated[AsyncSession, Depends(get_session)]

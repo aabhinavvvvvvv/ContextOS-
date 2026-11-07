@@ -1,9 +1,14 @@
 """Test helpers shared by several test files (fixtures live in conftest.py)."""
 
 import hashlib
+import uuid
 from collections.abc import Sequence
 
-from app.embeddings import EMBEDDING_DIM
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from app.config import get_settings
+from app.embeddings import EMBEDDING_DIM, Embedder
+from app.ingestion.service import ingest_document
 
 
 class FakeEmbedder:
@@ -59,3 +64,15 @@ def make_pdf(page_texts: list[str]) -> bytes:
         xref_offset,
     )
     return bytes(pdf)
+
+
+class InlineJobQueue:
+    """Test stand-in for app.jobs.JobQueue: runs ingestion immediately, without Redis."""
+
+    def __init__(self, engine: AsyncEngine, embedder: Embedder | FakeEmbedder) -> None:
+        self.engine = engine
+        self.embedder = embedder
+
+    async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:
+        await ingest_document(self.engine, document_id, get_settings().upload_dir, self.embedder)
+        return True

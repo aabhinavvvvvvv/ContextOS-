@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.db import create_db_engine, get_engine
 from app.documents.router import router as documents_router
+from app.search.router import router as search_router
 from app.jobs import JobQueue, create_saq_queue
 from app.logging_config import configure_logging
 
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="ContextOS API", version="0.1.0", lifespan=lifespan)
 app.include_router(documents_router)
+app.include_router(search_router)
 
 
 class HealthResponse(BaseModel):

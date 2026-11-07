@@ -5,10 +5,9 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.db import get_session
+from app.db import SessionDep
 from app.documents import service
 from app.documents.schemas import ChunkRead, DocumentRead
 from app.jobs import JobQueue, get_job_queue
@@ -17,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 JobQueueDep = Annotated[JobQueue, Depends(get_job_queue)]
 

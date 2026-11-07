@@ -11,7 +11,10 @@ and it reads up to 512 tokens, enough for our ~375-token chunks.
 """
 
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
+
+from app.config import get_settings
 
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIM = 384
@@ -38,6 +41,16 @@ class Embedder:
         """Vector for a search query. Queries get a model-specific prefix, handled by fastembed."""
         [vector] = self._model.query_embed([text])
         return vector.tolist()
+
+
+@lru_cache
+def get_embedder() -> Embedder:
+    """FastAPI dependency: one model per API process, loaded on the first request that needs it.
+
+    A plain (sync) function, so FastAPI runs it in a worker thread and the ~1s model load
+    doesn't freeze other requests. API tests that never search never load the model.
+    """
+    return Embedder(get_settings().model_cache_dir)
 
 
 def chunk_embedding_text(heading: str | None, text: str) -> str:

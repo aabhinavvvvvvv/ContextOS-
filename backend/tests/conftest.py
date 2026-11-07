@@ -8,7 +8,6 @@ import asyncio
 import os
 import shutil
 import tempfile
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -17,14 +16,14 @@ from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import get_settings
 from app.db import build_database_url
-from app.ingestion.service import ingest_document
+from app.embeddings import Embedder, get_embedder
 from app.jobs import get_job_queue
 from app.main import app
-from tests.helpers import FakeEmbedder
+from tests.helpers import FakeEmbedder, InlineJobQueue
 
 TEST_UPLOAD_DIR = Path(tempfile.mkdtemp(prefix="contextos-test-uploads-"))
 os.environ["POSTGRES_DB"] = "contextos_test"
@@ -70,29 +69,25 @@ def test_database() -> Iterator[None]:
     shutil.rmtree(TEST_UPLOAD_DIR, ignore_errors=True)
 
 
-class InlineJobQueue:
-    """Test stand-in for app.jobs.JobQueue: runs ingestion immediately, without Redis."""
-
-    def __init__(self, engine: AsyncEngine) -> None:
-        self.engine = engine
-
-    async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:
-        await ingest_document(
-            self.engine, document_id, get_settings().upload_dir, FakeEmbedder()
-        )
-        return True
+@pytest.fixture(scope="session")
+def real_embedder() -> Embedder:
+    """The real embedding model, loaded at most once per test run (for @pytest.mark.model tests)."""
+    return Embedder(get_settings().model_cache_dir)
 
 
 @pytest.fixture
 def client(test_database: None) -> Iterator[TestClient]:
     """Per test: empty tables and uploads, then a client with the app's lifespan running.
 
-    Jobs run inline by default; tests about the real queue override get_job_queue.
+    By default, jobs run inline and embeddings are fake (fast, no model). Tests that need
+    the real queue or the real model override get_job_queue / get_embedder.
     """
     asyncio.run(_empty_tables())
     shutil.rmtree(TEST_UPLOAD_DIR, ignore_errors=True)
     with TestClient(app) as test_client:
-        inline_queue = InlineJobQueue(app.state.db_engine)
+        fake_embedder = FakeEmbedder()
+        inline_queue = InlineJobQueue(app.state.db_engine, fake_embedder)
         app.dependency_overrides[get_job_queue] = lambda: inline_queue
+        app.dependency_overrides[get_embedder] = lambda: fake_embedder
         yield test_client
     app.dependency_overrides.clear()

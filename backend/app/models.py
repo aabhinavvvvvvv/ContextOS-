@@ -13,6 +13,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     MetaData,
     String,
     Text,
@@ -69,8 +70,20 @@ class DocumentChunk(Base):
     """One retrievable piece of a document's text, in reading order."""
 
     __tablename__ = "chunks"
-    # Also serves as the index for "all chunks of document X, in order".
-    __table_args__ = (UniqueConstraint("document_id", "chunk_index"),)
+    __table_args__ = (
+        # Also serves as the index for "all chunks of document X, in order".
+        UniqueConstraint("document_id", "chunk_index"),
+        # Approximate nearest-neighbour index for semantic search. vector_cosine_ops must
+        # match the operator queries use (<=>, cosine distance). m / ef_construction are
+        # pgvector's defaults, written out: higher = better recall, slower build, more memory.
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(

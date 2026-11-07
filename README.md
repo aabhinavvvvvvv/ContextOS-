@@ -24,7 +24,8 @@ FastAPI backend ──► LangGraph agent ──► LLM provider / MCP connector
 backend/             FastAPI application (Python 3.12, managed by uv)
   app/               application package
     documents/       upload and listing (router → service → models)
-    ingestion/       extract text (md/txt/pdf) → chunk → save
+    ingestion/       extract text (md/txt/pdf) → chunk → embed → save
+    search/          semantic search over chunk embeddings (pgvector, HNSW index)
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
     worker.py        background worker process: runs ingestion jobs, re-queues unfinished documents
@@ -71,6 +72,7 @@ Uploads are saved immediately and ingested by the worker. If the worker is stopp
 | `GET` | `/documents?limit=50` | List documents, newest first |
 | `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
 | `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
+| `GET` | `/search?q=...&limit=5` | Semantic search: chunks closest in meaning to `q`, best first, with citation fields and a `score` (cosine similarity) |
 
 ```bash
 curl -F "file=@notes.md" http://localhost:8000/documents
