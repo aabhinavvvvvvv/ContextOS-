@@ -17,9 +17,11 @@ class SearchResult(BaseModel):
     page_number: int | None
     text: str
     score: float
+    semantic_rank: int | None = None
+    keyword_rank: int | None = None
 
 
 class SearchResponse(BaseModel):
     query: str
-    mode: Literal["semantic", "keyword"]
+    mode: Literal["hybrid", "semantic", "keyword"]
     results: list[SearchResult]

@@ -25,7 +25,7 @@ backend/             FastAPI application (Python 3.12, managed by uv)
   app/               application package
     documents/       upload and listing (router → service → models)
     ingestion/       extract text (md/txt/pdf) → chunk → embed → save
-    search/          semantic search (pgvector, HNSW index) and keyword search (tsvector, GIN index)
+    search/          hybrid search: semantic (pgvector, HNSW) + keyword (tsvector, GIN), fused with RRF
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
     worker.py        background worker process: runs ingestion jobs, re-queues unfinished documents
@@ -72,7 +72,7 @@ Uploads are saved immediately and ingested by the worker. If the worker is stopp
 | `GET` | `/documents?limit=50` | List documents, newest first |
 | `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
 | `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
-| `GET` | `/search?q=...&limit=5&mode=semantic` | Search chunks, best first, with citation fields. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank; not comparable across modes) |
+| `GET` | `/search?q=...&limit=5&mode=hybrid` | Search chunks, best first, with citation fields. `mode=hybrid` (default): semantic + keyword merged by Reciprocal Rank Fusion, with each method's rank. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank). Scores are only comparable within one mode. |
 
 ```bash
 curl -F "file=@notes.md" http://localhost:8000/documents

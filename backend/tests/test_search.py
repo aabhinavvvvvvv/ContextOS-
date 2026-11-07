@@ -22,9 +22,10 @@ def upload(client: TestClient, filename: str, content: bytes) -> dict:
     return response.json()
 
 
-def search(client: TestClient, q: str, limit: int = 5) -> list[dict]:
-    response = client.get("/search", params={"q": q, "limit": limit})
+def search(client: TestClient, q: str, limit: int = 5, mode: str = "hybrid") -> list[dict]:
+    response = client.get("/search", params={"q": q, "limit": limit, "mode": mode})
     assert response.status_code == 200
+    assert response.json()["mode"] == mode
     return response.json()["results"]
 
 
@@ -33,7 +34,7 @@ def test_search_returns_the_matching_chunk_with_citation_fields(client: TestClie
 
     # FakeEmbedder gives identical text an identical vector, so querying with a chunk's
     # exact embedding text (heading + text) must return that chunk first, similarity 1.
-    [hit] = search(client, "Architecture > API\n\nREST, not GraphQL.", limit=1)
+    [hit] = search(client, "Architecture > API\n\nREST, not GraphQL.", limit=1, mode="semantic")
 
     assert hit["document_id"] == document["id"]
     assert hit["filename"] == "notes.md"
@@ -57,6 +58,28 @@ def test_results_are_best_first_and_respect_the_limit(client: TestClient) -> Non
 
 def test_search_with_no_documents_returns_empty_results(client: TestClient) -> None:
     assert search(client, "anything") == []
+
+
+def test_hybrid_is_the_default_mode(client: TestClient) -> None:
+    assert client.get("/search", params={"q": "anything"}).json()["mode"] == "hybrid"
+
+
+def test_hybrid_ranks_a_chunk_found_by_both_methods_first(client: TestClient) -> None:
+    upload(
+        client,
+        "mixed.md",
+        b"# One\nalpha beta\n\n# Two\ngamma delta\n\n# Three\nconnectors use OAuth tokens\n",
+    )
+
+    results = search(client, "OAuth")
+
+    # Fake embeddings rank every chunk somewhere semantically; only "Three" also matches
+    # the keyword, so its two contributions put it first.
+    top = results[0]
+    assert top["heading"] == "Three"
+    assert top["keyword_rank"] == 1
+    assert top["semantic_rank"] is not None
+    assert all(hit["keyword_rank"] is None for hit in results[1:])
 
 
 def keyword(client: TestClient, q: str) -> list[dict]:
@@ -132,3 +155,26 @@ def test_search_finds_chunks_by_meaning_not_shared_words(
     results = search(client, "Where is our information kept?")
 
     assert [hit["heading"] for hit in results] == ["Database", "Frontend", "Errands"]
+
+
+@pytest.mark.model
+def test_hybrid_finds_a_rare_exact_term_and_a_paraphrase(
+    client: TestClient, real_embedder: Embedder
+) -> None:
+    app.dependency_overrides[get_embedder] = lambda: real_embedder
+    app.dependency_overrides[get_job_queue] = lambda: InlineJobQueue(
+        app.state.db_engine, real_embedder
+    )
+    upload(
+        client,
+        "plan.md",
+        b"# Storage\nWe store everything in PostgreSQL with pgvector.\n\n"
+        b"# Connectors\nGitHub access uses OAuth tokens.\n\n"
+        b"# Interface\nThe UI is built with React and TypeScript.\n\n"
+        b"# Errands\nBuy milk and eggs on the way home.\n",
+    )
+
+    # A rare exact term (keyword's strength) and a paraphrase with no shared words
+    # (semantic's strength): hybrid gets both right.
+    assert search(client, "OAuth")[0]["heading"] == "Connectors"
+    assert search(client, "Where is our information kept?")[0]["heading"] == "Storage"
