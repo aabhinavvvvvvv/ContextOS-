@@ -7,6 +7,7 @@ dependencies = [
     "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "fastapi>=0.162.0",
+    "fastembed>=0.9.1",
     "pydantic-settings>=2.16.2",
     "pypdf>=6.21.4",
     "python-multipart>=0.0.33",
@@ -19,7 +20,10 @@ dependencies = [
 # Let tests do `import app` when pytest runs from backend/.
 pythonpath = ["."]
 testpaths = ["tests"]
-markers = ["integration: needs the Docker services running (docker compose up -d)"]
+markers = [
+    "integration: needs the Docker services running (docker compose up -d)",
+    "model: loads the local embedding model (downloads ~65 MB on first run)",
+]
 
 [dependency-groups]
 dev = [

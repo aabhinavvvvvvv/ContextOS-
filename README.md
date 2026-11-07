@@ -25,11 +25,13 @@ backend/             FastAPI application (Python 3.12, managed by uv)
   app/               application package
     documents/       upload and listing (router → service → models)
     ingestion/       extract text (md/txt/pdf) → chunk → save
+    embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
     worker.py        background worker process: runs ingestion jobs, re-queues unfinished documents
   migrations/        Alembic database migrations
   tests/             pytest tests (integration tests use a separate contextos_test database)
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
+data/models/         downloaded embedding model, ~65 MB, fetched on first use (gitignored)
 docker-compose.yml   local Postgres (pgvector) and Redis
 .env.example         template for local configuration
 ```

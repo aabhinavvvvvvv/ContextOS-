@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     upload_dir: Path = REPO_ROOT / "data" / "uploads"
     max_upload_bytes: int = 25 * 1024 * 1024  # 25 MiB
 
+    # Downloaded embedding models. Not the system temp dir, which is wiped on reboot.
+    model_cache_dir: Path = REPO_ROOT / "data" / "models"
+
     @property
     def redis_url(self) -> str:
         # Fail fast (2s) if Redis is unreachable. No socket_timeout: the worker's
