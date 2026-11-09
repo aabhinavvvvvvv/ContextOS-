@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 1 complete** (backend and document ingestion). Next: Phase 2, embeddings and RAG. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 2 complete**: documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers. Next: Phase 3, persistent memory. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -87,8 +87,8 @@ curl -F "file=@notes.md" http://localhost:8000/documents
 |---|---|---|
 | 0 | Foundations and project setup | ✅ |
 | 1 | FastAPI backend, document ingestion, PostgreSQL, background worker | ✅ |
-| 2 | Embeddings, hybrid retrieval, grounded answers with citations | ⏳ next |
-| 3 | Persistent memory | |
+| 2 | Embeddings, hybrid retrieval, grounded answers with citations | ✅ |
+| 3 | Persistent memory | ⏳ next |
 | 4 | Agentic workflows with LangGraph | |
 | 5 | Live connectors (GitHub, local docs) and MCP | |
 | 6 | Controlled actions with human approval | |

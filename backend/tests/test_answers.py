@@ -42,7 +42,8 @@ def test_build_prompt_numbers_and_delimits_each_source() -> None:
         "Sources:\n\n"
         '<source id="1" document="doc.md" location="Architecture > API">\nREST, not GraphQL.\n</source>\n\n'
         '<source id="2" document="adr.pdf" location="page 2">\nDecision: REST\n</source>\n\n'
-        "Question: Which API style?"
+        "Question: Which API style?\n\n"
+        "Answer using only the sources above, citing them like [1]."
     )
 
 
@@ -98,7 +99,7 @@ def test_ask_answers_from_retrieved_sources_with_verified_citations(client: Test
     [(system, prompt)] = llm.calls
     assert system == SYSTEM_PROMPT
     assert '<source id="1" document="notes.md" location="Architecture > API">' in prompt
-    assert prompt.endswith("Question: REST GraphQL")
+    assert "\n\nQuestion: REST GraphQL\n\n" in prompt
 
 
 @pytest.mark.integration

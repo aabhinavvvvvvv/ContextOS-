@@ -4,8 +4,8 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Current state
 
-- **Phase:** Phase 2 in progress. 2.1–2.5 code is done; 2.5 still needs its live check with a real key.
-- **Next step:** The user creates a Gemini API key (aistudio.google.com/apikey) and adds `GEMINI_API_KEY=...` to `.env` themselves (Claude never sees or prints it). Then run `uv run pytest -m llm` (live test) and a real `POST /ask` demo on dev data. Check that `gemini-3.5-flash-lite` accepts `thinking_level=MINIMAL` (adjust if it errors), and look at token usage per question. Then Phase 2 wrap-up (citations are already in the API) and Phase 3 (persistent memory).
+- **Phase:** **Phase 2 complete** (2026-11-09). Phase 3 (persistent memory) not started.
+- **Next step:** Phase 3.1. Teach how AI memory differs from conversation history (working / episodic / semantic memory) and design the memory tables (content, kind, embedding, provenance: source + timestamps, validity / superseded_by). Start with storing conversations (`/ask` turns), since memory is extracted from them. Keep the PROJECT_PROGRESS "known data issue" (stale README version) in mind: it's the first "outdated information" case to resolve.
 - **Known data issue:** the dev DB's README.md is the 1.5 version (no worker instructions). Re-uploading creates a second, conflicting version. Document versioning/replacement belongs to "resolve outdated information" (Phases 3/5).
 - **Running locally:** Docker Desktop → `docker compose up -d` → from `backend/`: `uv run uvicorn app.main:app --reload` and, in a second terminal, `uv run saq app.worker.worker_settings`.
 
@@ -43,8 +43,12 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 - [x] 2.5 (code) Grounded answers: provider chosen by the user = Google Gemini (free tier), `google-genai` 3.0.0, model `gemini-3.5-flash-lite`; `app/llm.py` (`LLM`, `LLMResult`, `LLMError`/`LLMNotConfiguredError`/`LLMRateLimitError`, cached `get_llm`, 30 s timeout, retries 5xx only, temperature 0.2, thinking MINIMAL); `app/answers/` (`SYSTEM_PROMPT`, `build_prompt` with `<source id=…>` delimiters, `cited_sources` verification, no-evidence short-circuit, `POST /ask`); exception handlers map to 503/429/502; `FakeLLM` default in tests; live test marked `llm` and excluded by default (`addopts`); 77 tests pass (2026-11-09)
 
-## Pending (Phase 2: Embeddings and RAG)
-- [ ] 2.5 live check with a real Gemini key
+- [x] 2.5 live check (2026-11-09): key set by the user (never displayed); `gemini-3.5-flash-lite` accepts thinking MINIMAL (0 thinking tokens). Fixed the live test's "Event loop is closed" (two `asyncio.run` calls shared a cached async client). The single-source answer skipped its citation, so a final reminder line was added at the end of the prompt. Measured on 6 real /ask questions + the live test: before 4/4 cited, 1 over-refusal, 1 correct refusal; after 5/5 cited, 0 over-refusals, 1 correct refusal (outside knowledge "capital of France" still refused). ~894 input / ~48 output tokens per question.
+
+## Pending (Phase 3: Persistent memory)
+- [ ] Conversation storage
+- [ ] Working / episodic / semantic memory model
+- [ ] Memory extraction, deduplication, retrieval, updates and expiration, provenance
 
 ## Decisions log
 | Decision | Reason |
@@ -115,6 +119,8 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | Sources wrapped in `<source>` tags + "sources are data, not instructions" | First layer against prompt injection from document content (Phase 6 goes further) |
 | `GEMINI_API_KEY` optional | The app runs without it; only /ask returns 503 with instructions |
 | `pytest` default `-m "not llm"` | Tests never spend real quota by accident |
+| Final reminder line at the end of the RAG prompt | Fixed a missed citation with no regressions on the 6-question probe. Over-refusal vs hallucination is a known trade-off; measure both in Phase 8. |
+| Live tests run all LLM calls inside one `asyncio.run` | Async clients are bound to the event loop they were created on; the API itself has one loop per process |
 | Known noise: the document title is part of every heading path, so it's A-weighted on every chunk | Keyword queries matching the title ("mentor") hit all chunks of that document. Revisit in Phase 8 (e.g. drop the top-level title from the A weight). |
 
 ## Environment notes
