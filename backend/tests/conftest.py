@@ -22,8 +22,9 @@ from app.config import get_settings
 from app.db import build_database_url
 from app.embeddings import Embedder, get_embedder
 from app.jobs import get_job_queue
+from app.llm import get_llm
 from app.main import app
-from tests.helpers import FakeEmbedder, InlineJobQueue
+from tests.helpers import FakeEmbedder, FakeLLM, InlineJobQueue
 
 TEST_UPLOAD_DIR = Path(tempfile.mkdtemp(prefix="contextos-test-uploads-"))
 os.environ["POSTGRES_DB"] = "contextos_test"
@@ -79,15 +80,18 @@ def real_embedder() -> Embedder:
 def client(test_database: None) -> Iterator[TestClient]:
     """Per test: empty tables and uploads, then a client with the app's lifespan running.
 
-    By default, jobs run inline and embeddings are fake (fast, no model). Tests that need
-    the real queue or the real model override get_job_queue / get_embedder.
+    By default, jobs run inline, embeddings are fake (fast, no model) and the LLM is fake
+    (no quota spent, ever). Tests needing the real thing override get_job_queue /
+    get_embedder / get_llm.
     """
     asyncio.run(_empty_tables())
     shutil.rmtree(TEST_UPLOAD_DIR, ignore_errors=True)
     with TestClient(app) as test_client:
         fake_embedder = FakeEmbedder()
         inline_queue = InlineJobQueue(app.state.db_engine, fake_embedder)
+        fake_llm = FakeLLM()
         app.dependency_overrides[get_job_queue] = lambda: inline_queue
         app.dependency_overrides[get_embedder] = lambda: fake_embedder
+        app.dependency_overrides[get_llm] = lambda: fake_llm
         yield test_client
     app.dependency_overrides.clear()

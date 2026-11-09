@@ -10,18 +10,21 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Response, status
+from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.answers.router import router as answers_router
 from app.config import get_settings
 from app.db import create_db_engine, get_engine
 from app.documents.router import router as documents_router
-from app.search.router import router as search_router
 from app.jobs import JobQueue, create_saq_queue
+from app.llm import LLMError, LLMNotConfiguredError, LLMRateLimitError
 from app.logging_config import configure_logging
+from app.search.router import router as search_router
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="ContextOS API", version="0.1.0", lifespan=lifespan)
 app.include_router(documents_router)
 app.include_router(search_router)
+app.include_router(answers_router)
+
+
+# LLM failures can surface from any route that uses the model (and from the get_llm
+# dependency itself), so they're mapped to status codes once, here.
+# FastAPI picks the handler for the most specific matching exception class.
+@app.exception_handler(LLMNotConfiguredError)
+async def llm_not_configured(request: Request, exc: LLMNotConfiguredError) -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content={"detail": str(exc)})
+
+
+@app.exception_handler(LLMRateLimitError)
+async def llm_rate_limited(request: Request, exc: LLMRateLimitError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": "The LLM provider's quota is used up. Try again later."},
+    )
+
+
+@app.exception_handler(LLMError)
+async def llm_failed(request: Request, exc: LLMError) -> JSONResponse:
+    logger.warning("LLM call failed: %s", exc)
+    return JSONResponse(status_code=status.HTTP_502_BAD_GATEWAY, content={"detail": str(exc)})
 
 
 class HealthResponse(BaseModel):

@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # Downloaded embedding models. Not the system temp dir, which is wiped on reboot.
     model_cache_dir: Path = REPO_ROOT / "data" / "models"
 
+    # LLM for answer generation (Google Gemini). Optional: without a key the API still runs,
+    # and only POST /ask returns 503.
+    gemini_api_key: SecretStr | None = None
+    llm_model: str = "gemini-3.5-flash-lite"
+
     @property
     def redis_url(self) -> str:
         # Fail fast (2s) if Redis is unreachable. No socket_timeout: the worker's

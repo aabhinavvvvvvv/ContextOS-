@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.config import get_settings
 from app.embeddings import EMBEDDING_DIM, Embedder
 from app.ingestion.service import ingest_document
+from app.llm import LLMResult
 
 
 class FakeEmbedder:
@@ -76,3 +77,18 @@ class InlineJobQueue:
     async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:
         await ingest_document(self.engine, document_id, get_settings().upload_dir, self.embedder)
         return True
+
+
+class FakeLLM:
+    """Stands in for app.llm.LLM: returns a scripted answer and records every prompt sent."""
+
+    def __init__(self, answer: str = "Scripted answer [1].", error: Exception | None = None) -> None:
+        self.answer = answer
+        self.error = error
+        self.calls: list[tuple[str, str]] = []  # (system, prompt) per call
+
+    async def generate(self, *, system: str, prompt: str, max_output_tokens: int = 1024) -> LLMResult:
+        self.calls.append((system, prompt))
+        if self.error is not None:
+            raise self.error
+        return LLMResult(text=self.answer, input_tokens=100, output_tokens=10, thinking_tokens=0)

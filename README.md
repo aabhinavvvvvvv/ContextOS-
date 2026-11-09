@@ -26,6 +26,8 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     documents/       upload and listing (router → service → models)
     ingestion/       extract text (md/txt/pdf) → chunk → embed → save
     search/          hybrid search: semantic (pgvector, HNSW) + keyword (tsvector, GIN), fused with RRF
+    answers/         RAG: retrieve (hybrid search) → grounded prompt → LLM → verified citations
+    llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
     worker.py        background worker process: runs ingestion jobs, re-queues unfinished documents
@@ -43,7 +45,7 @@ Prerequisites: Docker, [uv](https://docs.astral.sh/uv/), Git.
 
 ```bash
 # 1. Configuration
-cp .env.example .env            # then set POSTGRES_PASSWORD
+cp .env.example .env            # then set POSTGRES_PASSWORD (and GEMINI_API_KEY for /ask)
 
 # 2. Infrastructure (Postgres on localhost:5433, Redis on localhost:6380)
 docker compose up -d
@@ -72,6 +74,7 @@ Uploads are saved immediately and ingested by the worker. If the worker is stopp
 | `GET` | `/documents?limit=50` | List documents, newest first |
 | `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
 | `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
+| `POST` | `/ask` `{"question": "...", "top_k": 5}` | Grounded answer: hybrid search, then the LLM answers **only** from the retrieved chunks, citing them as `[n]`. Returns `answer`, verified `citations`, token usage. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
 | `GET` | `/search?q=...&limit=5&mode=hybrid` | Search chunks, best first, with citation fields. `mode=hybrid` (default): semantic + keyword merged by Reciprocal Rank Fusion, with each method's rank. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank). Scores are only comparable within one mode. |
 
 ```bash
