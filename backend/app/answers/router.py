@@ -29,15 +29,18 @@ async def ask(
     LLM failures map to: 503 (no API key configured), 429 (provider quota used up),
     502 (provider error or timeout).
     """
-    # Check before answering: a typo'd id shouldn't cost an LLM call.
-    if (
-        request.conversation_id is not None
-        and await conversations.get_conversation(session, request.conversation_id) is None
-    ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+    history: list[tuple[str, str]] = []
+    if request.conversation_id is not None:
+        # Check before answering: a typo'd id shouldn't cost an LLM call.
+        if await conversations.get_conversation(session, request.conversation_id) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
+        recent = await conversations.recent_messages(
+            session, request.conversation_id, limit=2 * service.MAX_HISTORY_TURNS
+        )
+        history = [(m.role, m.content) for m in recent]
 
     answer = await service.answer_question(
-        session, embedder, llm, request.question, top_k=request.top_k
+        session, embedder, llm, request.question, top_k=request.top_k, history=history
     )
     citations = [
         CitationRead(
@@ -67,6 +70,7 @@ async def ask(
     return AskResponse(
         conversation_id=conversation_id,
         question=request.question,
+        standalone_question=answer.standalone_question,
         answer=answer.text,
         citations=citations,
         sources_considered=answer.sources_considered,

@@ -47,6 +47,19 @@ async def list_messages(session: AsyncSession, conversation_id: uuid.UUID) -> Se
     return result.all()
 
 
+async def recent_messages(
+    session: AsyncSession, conversation_id: uuid.UUID, *, limit: int
+) -> list[Message]:
+    """The last `limit` messages, oldest first (the order a transcript is read in)."""
+    result = await session.scalars(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.position.desc())  # newest first, so LIMIT keeps the latest...
+        .limit(limit)
+    )
+    return list(reversed(result.all()))  # ...then flip back to reading order
+
+
 async def record_turn(
     session: AsyncSession,
     *,

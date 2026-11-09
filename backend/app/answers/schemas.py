@@ -26,6 +26,9 @@ class CitationRead(BaseModel):
 class AskResponse(BaseModel):
     conversation_id: uuid.UUID  # send it back with the next question to continue the thread
     question: str
+    # Follow-ups only: the question as searched and answered, e.g. "Why?" →
+    # "Why did we move ingestion to a worker?". Null on a conversation's first question.
+    standalone_question: str | None = None
     answer: str
     citations: list[CitationRead]
     sources_considered: int

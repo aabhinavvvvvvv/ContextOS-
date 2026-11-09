@@ -80,10 +80,16 @@ class InlineJobQueue:
 
 
 class FakeLLM:
-    """Stands in for app.llm.LLM: returns a scripted answer and records every prompt sent."""
+    """Stands in for app.llm.LLM: returns scripted replies and records every prompt sent.
 
-    def __init__(self, answer: str = "Scripted answer [1].", error: Exception | None = None) -> None:
-        self.answer = answer
+    `answer` is one reply for every call, or a list replied in order (the last one repeats),
+    e.g. ["<rewritten question>", "<answer>"] for a follow-up.
+    """
+
+    def __init__(
+        self, answer: str | list[str] = "Scripted answer [1].", error: Exception | None = None
+    ) -> None:
+        self.replies = [answer] if isinstance(answer, str) else list(answer)
         self.error = error
         self.calls: list[tuple[str, str]] = []  # (system, prompt) per call
 
@@ -91,4 +97,5 @@ class FakeLLM:
         self.calls.append((system, prompt))
         if self.error is not None:
             raise self.error
-        return LLMResult(text=self.answer, input_tokens=100, output_tokens=10, thinking_tokens=0)
+        text = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        return LLMResult(text=text, input_tokens=100, output_tokens=10, thinking_tokens=0)

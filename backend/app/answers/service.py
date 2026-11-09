@@ -1,6 +1,7 @@
 """Retrieval-augmented generation: search the documents, then answer only from what was found."""
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,67 @@ Rules:
 _FINAL_REMINDER = "Answer using only the sources above, citing them like [1]."
 
 _CITATION = re.compile(r"\[(\d+)\]")
+_CITATION_WITH_SPACE = re.compile(r"\s*\[\d+\]")
+
+# --- Working memory: follow-up questions --------------------------------------------
+# A follow-up like "Why?" can't be searched on its own. The recent turns are used to
+# rewrite it into a standalone question, which is then searched and answered.
+
+MAX_HISTORY_TURNS = 3  # question + answer pairs; enough to resolve "it" / "that" / "why?"
+MAX_HISTORY_MESSAGE_CHARS = 1000  # bounds the rewrite prompt: 6 messages ≈ 1,500 tokens at most
+MAX_STANDALONE_CHARS = 1000  # same limit as a question typed by the user
+
+REWRITE_SYSTEM_PROMPT = """You rewrite the user's follow-up question into a standalone question.
+
+Rules:
+- Use the conversation only to work out what the follow-up refers to ("it", "that", "why?").
+- Keep the user's intent. Do not answer the question.
+- If the follow-up is already standalone, return it unchanged.
+- Reply with the standalone question only: no quotes, no explanation."""
+
+History = Sequence[tuple[str, str]]  # (role, content) of past messages, oldest first
+
+
+@dataclass(frozen=True)
+class Rewrite:
+    question: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+def _history_line(role: str, content: str) -> str:
+    # Old [n] markers referred to an earlier prompt's sources: remove them. Collapse
+    # whitespace so each message is one transcript line, then clip long ones.
+    text = " ".join(_CITATION_WITH_SPACE.sub("", content).split())
+    if len(text) > MAX_HISTORY_MESSAGE_CHARS:
+        text = text[:MAX_HISTORY_MESSAGE_CHARS] + "…"
+    speaker = "User" if role == "user" else "Assistant"
+    return f"{speaker}: {text}"
+
+
+def build_rewrite_prompt(question: str, history: History) -> str:
+    transcript = "\n".join(_history_line(role, content) for role, content in history)
+    return f"Conversation:\n{transcript}\n\nFollow-up question: {question}"
+
+
+async def standalone_question(llm: LLM, question: str, history: History) -> Rewrite:
+    """The question to search for: rewritten using the conversation, if there is one."""
+    if not history:
+        return Rewrite(question)  # first question: nothing to resolve, no LLM call
+    result = await llm.generate(
+        system=REWRITE_SYSTEM_PROMPT,
+        prompt=build_rewrite_prompt(question, history),
+        max_output_tokens=200,
+    )
+    rewritten = result.text.strip().strip('"').strip()
+    if not rewritten or len(rewritten) > MAX_STANDALONE_CHARS:
+        # Model output is checked, not trusted: an empty or rambling reply would search for
+        # garbage, so fall back to the user's own words.
+        rewritten = question
+    return Rewrite(rewritten, result.input_tokens, result.output_tokens)
+
+
+# --- Answering ------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -42,6 +104,7 @@ class Answer:
     sources_considered: int
     input_tokens: int = 0
     output_tokens: int = 0
+    standalone_question: str | None = None  # set when a follow-up was rewritten
 
 
 def build_prompt(question: str, hits: list[SearchHit]) -> str:
@@ -74,19 +137,37 @@ def cited_sources(answer_text: str, hits: list[SearchHit]) -> list[Citation]:
 
 
 async def answer_question(
-    session: AsyncSession, embedder: Embedder, llm: LLM, question: str, *, top_k: int
+    session: AsyncSession,
+    embedder: Embedder,
+    llm: LLM,
+    question: str,
+    *,
+    top_k: int,
+    history: History = (),
 ) -> Answer:
-    query_vector = await run_in_threadpool(embedder.embed_query, question)
-    hits = await hybrid_search(session, question, query_vector, limit=top_k)
+    """Answer from the documents. With history, a follow-up is first made standalone."""
+    rewrite = await standalone_question(llm, question, history)
+    standalone = rewrite.question if history else None
+
+    query_vector = await run_in_threadpool(embedder.embed_query, rewrite.question)
+    hits = await hybrid_search(session, rewrite.question, query_vector, limit=top_k)
     if not hits:
         # Nothing to ground an answer in: don't call the model at all.
-        return Answer(text=NOT_FOUND_ANSWER, citations=[], sources_considered=0)
+        return Answer(
+            text=NOT_FOUND_ANSWER,
+            citations=[],
+            sources_considered=0,
+            input_tokens=rewrite.input_tokens,
+            output_tokens=rewrite.output_tokens,
+            standalone_question=standalone,
+        )
 
-    result = await llm.generate(system=SYSTEM_PROMPT, prompt=build_prompt(question, hits))
+    result = await llm.generate(system=SYSTEM_PROMPT, prompt=build_prompt(rewrite.question, hits))
     return Answer(
         text=result.text,
         citations=cited_sources(result.text, hits),
         sources_considered=len(hits),
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
+        input_tokens=rewrite.input_tokens + result.input_tokens,
+        output_tokens=rewrite.output_tokens + result.output_tokens,
+        standalone_question=standalone,
     )

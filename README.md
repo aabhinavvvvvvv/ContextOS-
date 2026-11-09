@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 3 in progress** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation. Next: follow-up questions (working memory). See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 3 in progress** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. Next: extracting long-term memories from conversations. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -75,7 +75,7 @@ Uploads are saved immediately and ingested by the worker. If the worker is stopp
 | `GET` | `/documents?limit=50` | List documents, newest first |
 | `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
 | `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
-| `POST` | `/ask` `{"question": "...", "top_k": 5, "conversation_id": null}` | Grounded answer: hybrid search, then the LLM answers **only** from the retrieved chunks, citing them as `[n]`. Returns `answer`, verified `citations`, token usage and `conversation_id` (send it back to continue the thread; 404 if unknown). The turn is saved only if answering succeeds. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
+| `POST` | `/ask` `{"question": "...", "top_k": 5, "conversation_id": null}` | Grounded answer: hybrid search, then the LLM answers **only** from the retrieved chunks, citing them as `[n]`. Returns `answer`, verified `citations`, token usage and `conversation_id` (send it back to continue the thread; 404 if unknown). In a conversation, a follow-up is first rewritten from the last 3 turns into a standalone question (`standalone_question`, e.g. "Why?" → "Why did we move ingestion to a Redis-backed worker?"), which is what gets searched and answered. The turn is saved only if answering succeeds. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
 | `GET` | `/conversations?limit=50` | Conversations, most recently active first |
 | `GET` | `/conversations/{id}` | One conversation with its messages in order; assistant messages include the citations shown at the time |
 | `GET` | `/search?q=...&limit=5&mode=hybrid` | Search chunks, best first, with citation fields. `mode=hybrid` (default): semantic + keyword merged by Reciprocal Rank Fusion, with each method's rank. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank). Scores are only comparable within one mode. |
