@@ -92,9 +92,19 @@ class FakeLLM:
         self.replies = [answer] if isinstance(answer, str) else list(answer)
         self.error = error
         self.calls: list[tuple[str, str]] = []  # (system, prompt) per call
+        self.json_schemas: list[dict] = []  # the schema of each JSON-mode call
 
-    async def generate(self, *, system: str, prompt: str, max_output_tokens: int = 1024) -> LLMResult:
+    async def generate(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        max_output_tokens: int = 1024,
+        json_schema: dict | None = None,
+    ) -> LLMResult:
         self.calls.append((system, prompt))
+        if json_schema is not None:
+            self.json_schemas.append(json_schema)
         if self.error is not None:
             raise self.error
         text = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]

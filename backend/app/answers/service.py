@@ -56,10 +56,15 @@ class Rewrite:
     output_tokens: int = 0
 
 
+def strip_citations(text: str) -> str:
+    """Remove [n] markers: they numbered the sources of the prompt that produced the text,
+    and mean nothing (or the wrong thing) anywhere else."""
+    return _CITATION_WITH_SPACE.sub("", text)
+
+
 def _history_line(role: str, content: str) -> str:
-    # Old [n] markers referred to an earlier prompt's sources: remove them. Collapse
-    # whitespace so each message is one transcript line, then clip long ones.
-    text = " ".join(_CITATION_WITH_SPACE.sub("", content).split())
+    # Collapse whitespace so each message is one transcript line, then clip long ones.
+    text = " ".join(strip_citations(content).split())
     if len(text) > MAX_HISTORY_MESSAGE_CHARS:
         text = text[:MAX_HISTORY_MESSAGE_CHARS] + "…"
     speaker = "User" if role == "user" else "Assistant"

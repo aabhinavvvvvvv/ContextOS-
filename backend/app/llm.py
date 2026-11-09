@@ -7,6 +7,7 @@ Callers get plain results and our own exception types, never SDK objects.
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
 
 import httpx2
 from google import genai
@@ -52,7 +53,16 @@ class LLM:
             ),
         )
 
-    async def generate(self, *, system: str, prompt: str, max_output_tokens: int = 1024) -> LLMResult:
+    async def generate(
+        self,
+        *,
+        system: str,
+        prompt: str,
+        max_output_tokens: int = 1024,
+        json_schema: dict[str, Any] | None = None,
+    ) -> LLMResult:
+        """Generate text. With `json_schema`, the reply is JSON constrained to that schema
+        ("structured output"). Callers must still validate it: constrained isn't guaranteed."""
         try:
             response = await self._client.aio.models.generate_content(
                 model=self._model,
@@ -64,6 +74,8 @@ class LLM:
                     # Answering from given sources needs little reasoning; thinking tokens
                     # count against the quota and add latency.
                     thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL),
+                    response_mime_type="application/json" if json_schema else None,
+                    response_json_schema=json_schema,
                 ),
             )
         except errors.ClientError as exc:

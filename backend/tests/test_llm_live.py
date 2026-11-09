@@ -5,6 +5,7 @@
 
 import asyncio
 import uuid
+from datetime import date
 
 import pytest
 
@@ -15,6 +16,7 @@ from app.answers.service import (
     standalone_question,
 )
 from app.llm import LLM, LLMNotConfiguredError, get_llm
+from app.memory.extraction import extract_memories
 from app.search.service import SearchHit
 
 pytestmark = pytest.mark.llm
@@ -129,3 +131,78 @@ def test_gemini_rewrites_follow_ups_into_standalone_questions() -> None:
             failures.append(follow_up)
 
     assert failures == [], f"{len(failures)}/{len(REWRITE_CASES)} rewrites failed: {failures}"
+
+
+# Memory extraction eval. Each case: (user message, assistant answer,
+#   expected memory count or None for "any",
+#   required: [(kind, [[any of these words], [and any of these], ...])], each matched by one memory,
+#   forbidden: words no memory may contain). Lowercase substring checks.
+MEMORY_CASES = [
+    # Nothing to remember: a question; document content in the answer; small talk.
+    ("Which database does ContextOS use?", "ContextOS uses PostgreSQL with pgvector [1].", 0, [], []),
+    ("What did we decide about the API?", "You decided on REST, not GraphQL [1].", 0, [], []),
+    ("Thanks, that's helpful!", "You're welcome.", 0, [], []),
+    # A decision with its reason; the README fact in the answer must not be extracted.
+    (
+        "We decided to switch the LLM provider to Gemini because it has a free tier. "
+        "What does the README say about configuring it?",
+        "The README says to set GEMINI_API_KEY in .env [1].",
+        None,
+        [("decision", [["gemini"], ["free"]])],
+        ["gemini_api_key", ".env"],
+    ),
+    (
+        "Please keep your answers short, I read them on my phone.",
+        "I couldn't find this in your documents.",
+        None,
+        [("preference", [["short", "concise", "brief"]])],
+        [],
+    ),
+    # A task with a relative date that must become absolute (the turn is on Tuesday 2026-11-10).
+    (
+        "I need to finish the upload tests by Friday. Which tests exist already?",
+        "There are tests for uploads and duplicate files [1].",
+        None,
+        [("task", [["upload"], ["2026-11-13", "november 13", "13 november"]])],
+        ["duplicate"],
+    ),
+    (
+        "Our team is three engineers, and I'm the one responsible for the backend.",
+        "I couldn't find this in your documents.",
+        None,
+        [("fact", [["three", "3"]]), ("fact", [["backend"]])],
+        [],
+    ),
+    # Secrets are never stored, even when the user asks.
+    ("Remember that the staging database password is hunter2.", "I couldn't find this in your documents.", None, [], ["hunter2"]),
+]
+
+
+def test_gemini_extracts_only_what_is_worth_remembering() -> None:
+    llm = fresh_llm()
+    turn_date = date(2026, 11, 10)
+
+    async def run() -> list:
+        return [
+            await extract_memories(llm, user, answer, turn_date)
+            for user, answer, _, _, _ in MEMORY_CASES
+        ]
+
+    failures = []
+    for (user, _, count, required, forbidden), memories in zip(MEMORY_CASES, asyncio.run(run()), strict=True):
+        found = [(m.kind, m.content.lower()) for m in memories]
+        problems = []
+        if count is not None and len(found) != count:
+            problems.append(f"expected {count} memories")
+        for kind, groups in required:
+            if not any(k == kind and all(any(w in text for w in group) for group in groups) for k, text in found):
+                problems.append(f"no {kind} matching {groups}")
+        problems += [f"contains {w!r}" for w in forbidden if any(w in text for _, text in found)]
+        print(f"\n{'FAIL' if problems else 'ok  '} {user[:60]!r}")
+        for m in memories:
+            print(f"       {m.kind:<10} {m.content}")
+        if problems:
+            print(f"       problems: {problems}")
+            failures.append(user[:40])
+
+    assert failures == [], f"{len(failures)}/{len(MEMORY_CASES)} cases failed: {failures}"

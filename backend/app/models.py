@@ -7,7 +7,7 @@ then review the generated file before running `uv run alembic upgrade head`.
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, get_args
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -167,6 +167,46 @@ class Message(Base):
     # "what the answer was based on" must not change or disappear.
     citations: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, server_default="[]"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # User messages: when long-term memories were extracted from this turn (NULL = not yet).
+    # Makes extraction idempotent, and lets a sweep find turns that still need it.
+    memories_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# One source of truth for memory kinds: the CHECK constraint and the API/LLM schemas use it.
+MemoryKind = Literal["fact", "decision", "preference", "task"]
+MEMORY_KINDS: tuple[str, ...] = get_args(MemoryKind)
+
+
+class Memory(Base):
+    """A durable, standalone statement extracted from a conversation (semantic memory).
+
+    e.g. kind="preference", content="The user prefers short answers."
+    """
+
+    __tablename__ = "memories"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN (" + ", ".join(f"'{kind}'" for kind in MEMORY_KINDS) + ")",
+            name="kind_valid",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text)
+    # Embedding of `content`, for finding relevant memories by meaning (used from Phase 3.5).
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(EMBEDDING_DIM), deferred=True, deferred_raiseload=True
+    )
+    # Provenance: the user message whose turn this was extracted from. CASCADE: deleting a
+    # conversation also forgets what was learned from it. Indexed: Postgres doesn't index
+    # foreign keys automatically, and the cascade has to find these rows.
+    source_message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
