@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 2 complete**: documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers. Next: Phase 3, persistent memory. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 3 in progress** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation. Next: follow-up questions (working memory). See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -27,6 +27,7 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     ingestion/       extract text (md/txt/pdf) → chunk → embed → save
     search/          hybrid search: semantic (pgvector, HNSW) + keyword (tsvector, GIN), fused with RRF
     answers/         RAG: retrieve (hybrid search) → grounded prompt → LLM → verified citations
+    conversations/   every /ask turn (question + answer + cited sources), the raw record memory is built from
     llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
@@ -74,7 +75,9 @@ Uploads are saved immediately and ingested by the worker. If the worker is stopp
 | `GET` | `/documents?limit=50` | List documents, newest first |
 | `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
 | `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
-| `POST` | `/ask` `{"question": "...", "top_k": 5}` | Grounded answer: hybrid search, then the LLM answers **only** from the retrieved chunks, citing them as `[n]`. Returns `answer`, verified `citations`, token usage. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
+| `POST` | `/ask` `{"question": "...", "top_k": 5, "conversation_id": null}` | Grounded answer: hybrid search, then the LLM answers **only** from the retrieved chunks, citing them as `[n]`. Returns `answer`, verified `citations`, token usage and `conversation_id` (send it back to continue the thread; 404 if unknown). The turn is saved only if answering succeeds. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
+| `GET` | `/conversations?limit=50` | Conversations, most recently active first |
+| `GET` | `/conversations/{id}` | One conversation with its messages in order; assistant messages include the citations shown at the time |
 | `GET` | `/search?q=...&limit=5&mode=hybrid` | Search chunks, best first, with citation fields. `mode=hybrid` (default): semantic + keyword merged by Reciprocal Rank Fusion, with each method's rank. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank). Scores are only comparable within one mode. |
 
 ```bash
@@ -88,7 +91,7 @@ curl -F "file=@notes.md" http://localhost:8000/documents
 | 0 | Foundations and project setup | ✅ |
 | 1 | FastAPI backend, document ingestion, PostgreSQL, background worker | ✅ |
 | 2 | Embeddings, hybrid retrieval, grounded answers with citations | ✅ |
-| 3 | Persistent memory | ⏳ next |
+| 3 | Persistent memory | ⏳ in progress |
 | 4 | Agentic workflows with LangGraph | |
 | 5 | Live connectors (GitHub, local docs) and MCP | |
 | 6 | Controlled actions with human approval | |

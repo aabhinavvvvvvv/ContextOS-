@@ -4,8 +4,9 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Current state
 
-- **Phase:** **Phase 2 complete** (2026-11-09). Phase 3 (persistent memory) not started.
-- **Next step:** Phase 3.1. Teach how AI memory differs from conversation history (working / episodic / semantic memory) and design the memory tables (content, kind, embedding, provenance: source + timestamps, validity / superseded_by). Start with storing conversations (`/ask` turns), since memory is extracted from them. Keep the PROJECT_PROGRESS "known data issue" (stale README version) in mind: it's the first "outdated information" case to resolve.
+- **Phase:** **Phase 3 in progress** (persistent memory). 3.1 conversation storage done (2026-11-09).
+- **Next step:** Phase 3.2, working memory for follow-ups. Observed live: "Why?" sent with a `conversation_id` is searched on its own and retrieves an unrelated chunk. Plan: load the last few turns of the conversation, have the LLM rewrite the follow-up into a standalone question ("Why did we move ingestion to a Redis worker?") for retrieval, and include the recent turns in the answer prompt. Teach context-window budgeting (how many turns), and that the rewrite costs a second LLM call (skip it on the first turn).
+- **Phase 3 plan:** 3.1 conversations ✅ → 3.2 working memory (follow-ups) → 3.3 `memories` table + LLM extraction as a background job (semantic facts/decisions/preferences with provenance: source message id, timestamps) → 3.4 dedup and updates (supersede, don't overwrite: `superseded_by`, `valid_from`/`valid_to`) → 3.5 memory retrieval into `/ask` (cited as memory, not documents) → 3.6 expiry/staleness + memory management endpoints (list, edit, delete).
 - **Known data issue:** the dev DB's README.md is the 1.5 version (no worker instructions). Re-uploading creates a second, conflicting version. Document versioning/replacement belongs to "resolve outdated information" (Phases 3/5).
 - **Running locally:** Docker Desktop → `docker compose up -d` → from `backend/`: `uv run uvicorn app.main:app --reload` and, in a second terminal, `uv run saq app.worker.worker_settings`.
 
@@ -45,9 +46,11 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 - [x] 2.5 live check (2026-11-09): key set by the user (never displayed); `gemini-3.5-flash-lite` accepts thinking MINIMAL (0 thinking tokens). Fixed the live test's "Event loop is closed" (two `asyncio.run` calls shared a cached async client). The single-source answer skipped its citation, so a final reminder line was added at the end of the prompt. Measured on 6 real /ask questions + the live test: before 4/4 cited, 1 over-refusal, 1 correct refusal; after 5/5 cited, 0 over-refusals, 1 correct refusal (outside knowledge "capital of France" still refused). ~894 input / ~48 output tokens per question.
 
+- [x] 3.1 Conversation storage (2026-11-09): `conversations` + `messages` tables (migration `0508dec1ba20`); `messages.position` with unique `(conversation_id, position)` (not `created_at`: `now()` is fixed per transaction); `citations` JSONB snapshot (not a FK: chunks are recreated on re-ingestion); `/ask` takes optional `conversation_id` (404 checked before the LLM call), returns `conversation_id`; a turn (question + answer) is saved in one transaction, nothing on LLM failure; `SELECT … FOR UPDATE` on the conversation row serializes simultaneous turns (verified: without it the concurrency test failed 3/3 with a unique violation); `GET /conversations`, `GET /conversations/{id}`. Found via the concurrency test: `record_turn` read `conversation.id` after commit, which only worked with `expire_on_commit=False` → now read before commit. 88 tests pass. Live: 2 conversations recorded; both refusals were correct (the dev DB has no embedding-model or API-architecture content; the top keyword hit was CLAUDE.md quoting the example question).
+
 ## Pending (Phase 3: Persistent memory)
-- [ ] Conversation storage
-- [ ] Working / episodic / semantic memory model
+- [ ] 3.2 Working memory: follow-up questions (standalone rewrite + recent turns in the prompt)
+- [ ] Episodic / semantic memory model
 - [ ] Memory extraction, deduplication, retrieval, updates and expiration, provenance
 
 ## Decisions log
@@ -122,6 +125,11 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | Final reminder line at the end of the RAG prompt | Fixed a missed citation with no regressions on the 6-question probe. Over-refusal vs hallucination is a known trade-off; measure both in Phase 8. |
 | Live tests run all LLM calls inside one `asyncio.run` | Async clients are bound to the event loop they were created on; the API itself has one loop per process |
 | Known noise: the document title is part of every heading path, so it's A-weighted on every chunk | Keyword queries matching the title ("mentor") hit all chunks of that document. Revisit in Phase 8 (e.g. drop the top-level title from the A weight). |
+| Conversations are the raw record; memories (3.3+) are extracted from them, not the other way round | History is append-only and complete; memory is distilled, editable and must cite the message it came from |
+| `/ask` route orchestrates answer → `record_turn`; `answer_question` knows nothing about conversations | RAG stays reusable (agent in Phase 4); storage policy stays in one place |
+| Save a turn only when the answer succeeds | Half a turn (question without answer) would mislead memory extraction; the client can just retry |
+| Row lock (`FOR UPDATE`) held only inside `record_turn`, after the LLM call | Locks for milliseconds, not for the seconds an LLM call takes |
+| Service functions must not rely on the caller's `expire_on_commit` | Read values you need before `commit()`; found by a test that used a default `AsyncSession` |
 
 ## Environment notes
 - Develop inside WSL Ubuntu 24.04. IDE: **Antigravity IDE**. Open the project via Command Palette → `Remote-WSL: Connect to WSL using Distro...` → Ubuntu-24.04 → open `/home/aabhinavvvvvvv/personal_projects/contextOS`. Install the Python and Pyrefly extensions "in WSL", then select the interpreter `backend/.venv/bin/python`.

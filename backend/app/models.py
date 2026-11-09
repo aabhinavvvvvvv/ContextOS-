@@ -7,6 +7,7 @@ then review the generated file before running `uv run alembic upgrade head`.
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -22,7 +23,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.embeddings import EMBEDDING_DIM
@@ -120,6 +121,52 @@ class DocumentChunk(Base):
         ),
         deferred=True,
         deferred_raiseload=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Conversation(Base):
+    """A thread of questions and answers: the raw record that memories are extracted from."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(Text)  # the first question, shortened
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Bumped on every new turn, so lists can show the most recently active thread first.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Message(Base):
+    """One side of a turn: the user's question or the assistant's answer."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        # Order within a conversation. Not created_at: a question and its answer are saved in
+        # one transaction, and Postgres's now() is the same for the whole transaction.
+        # Unique, so two concurrent turns can never claim the same slot.
+        UniqueConstraint("conversation_id", "position"),
+        CheckConstraint("role IN ('user', 'assistant')", name="role_valid"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    position: Mapped[int]  # 0, 1, 2, ... within the conversation
+    role: Mapped[str] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text)
+    # Assistant messages: the sources it cited, as the user saw them. A copy, not a foreign
+    # key to chunks: chunks are deleted and recreated on re-ingestion, but this record of
+    # "what the answer was based on" must not change or disappear.
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default="[]"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
