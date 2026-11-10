@@ -1,5 +1,6 @@
 """HTTP routes for grounded answers."""
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,7 +10,10 @@ from app.answers.schemas import AskRequest, AskResponse, CitationRead
 from app.conversations import service as conversations
 from app.db import SessionDep
 from app.embeddings import Embedder, get_embedder
+from app.jobs import JobQueue, get_job_queue
 from app.llm import LLM, get_llm
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["answers"])
 
@@ -20,6 +24,7 @@ async def ask(
     session: SessionDep,
     embedder: Annotated[Embedder, Depends(get_embedder)],
     llm: Annotated[LLM, Depends(get_llm)],
+    job_queue: Annotated[JobQueue, Depends(get_job_queue)],
 ) -> AskResponse:
     """Answer a question from your documents, citing the chunks used as [n].
 
@@ -55,7 +60,7 @@ async def ask(
         for c in answer.citations
     ]
     try:
-        conversation_id = await conversations.record_turn(
+        turn = await conversations.record_turn(
             session,
             conversation_id=request.conversation_id,
             question=request.question,
@@ -67,8 +72,15 @@ async def ask(
         # Deleted between the check above and now.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
 
+    # Learn from this turn in the background: the user doesn't wait for it.
+    try:
+        await job_queue.enqueue_memory_extraction(turn.user_message_id)
+    except Exception:
+        # The answer is already saved; the worker's sweep will queue extraction later.
+        logger.exception("Could not enqueue memory extraction for message %s", turn.user_message_id)
+
     return AskResponse(
-        conversation_id=conversation_id,
+        conversation_id=turn.conversation_id,
         question=request.question,
         standalone_question=answer.standalone_question,
         answer=answer.text,

@@ -13,15 +13,19 @@ from app.db import create_db_engine
 from app.jobs import JobQueue, create_saq_queue, get_job_queue
 from app.main import app
 from app.worker import shutdown, startup, worker_settings
+from tests.helpers import FakeLLM
 
 # The real worker's startup loads the real embedding model.
 pytestmark = [pytest.mark.integration, pytest.mark.model]
 
 
 class DroppingJobQueue:
-    """Simulates a lost job: the upload succeeds, but nothing reaches the queue."""
+    """Simulates a lost job: the request succeeds, but nothing reaches the queue."""
 
     async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:
+        return False
+
+    async def enqueue_memory_extraction(self, message_id: uuid.UUID) -> bool:
         return False
 
 
@@ -39,8 +43,16 @@ def upload_without_ingesting(client: TestClient, content: bytes) -> str:
     return response.json()["id"]
 
 
-def run_worker_until_idle() -> None:
-    """Start a real SAQ worker in burst mode: it processes everything queued, then exits."""
+def run_worker_until_idle(llm: FakeLLM | None = None) -> None:
+    """Start a real SAQ worker in burst mode: it processes everything queued, then exits.
+
+    Jobs get `llm` instead of the real Gemini client, so tests never spend quota.
+    """
+    fake_llm = llm or FakeLLM()
+
+    async def startup_with_fake_llm(ctx: dict) -> None:
+        await startup(ctx)
+        ctx["llm"] = fake_llm
 
     async def run() -> None:
         queue = create_saq_queue(get_settings())
@@ -48,7 +60,7 @@ def run_worker_until_idle() -> None:
         worker = Worker(
             queue,
             functions=worker_settings["functions"],
-            startup=startup,
+            startup=startup_with_fake_llm,
             shutdown=shutdown,
             burst=True,
             dequeue_timeout=1,  # burst mode: treat 1s with no new job as "queue is empty"
@@ -93,6 +105,19 @@ def test_worker_finishes_a_document_left_in_processing_by_a_crash(client: TestCl
     run_worker_until_idle()
 
     assert client.get(f"/documents/{document_id}").json()["status"] == "ready"
+
+
+def test_worker_extracts_memories_for_a_turn_whose_job_was_lost(client: TestClient) -> None:
+    app.dependency_overrides[get_job_queue] = lambda: DroppingJobQueue()
+    body = client.post("/ask", json={"question": "Keep answers short, please."}).json()
+    assert client.get("/memories").json() == []
+    llm = FakeLLM('{"memories": [{"kind": "preference", "content": "The user prefers short answers."}]}')
+
+    run_worker_until_idle(llm)  # the startup sweep finds the unextracted turn and queues it
+
+    [memory] = client.get("/memories").json()
+    assert (memory["kind"], memory["content"]) == ("preference", "The user prefers short answers.")
+    assert memory["conversation_id"] == body["conversation_id"]
 
 
 def test_upload_succeeds_even_when_the_queue_is_down(client: TestClient) -> None:

@@ -13,7 +13,7 @@ from sqlalchemy.orm import undefer
 
 from app.config import get_settings
 from app.db import create_db_engine
-from app.llm import LLMRateLimitError
+from app.llm import LLMRateLimitError, LLMRequestError
 from app.memory.extraction import (
     EXTRACTION_SYSTEM_PROMPT,
     MAX_MEMORIES_PER_TURN,
@@ -200,6 +200,17 @@ def test_overlapping_runs_store_the_memories_once(client: TestClient) -> None:
 
     assert len(llm.calls) == 2  # both got past the early check (that's the overlap)...
     assert (stored, count) == ([0, 1], 1)  # ...but only one saved its memories
+
+
+@pytest.mark.integration
+def test_a_rejected_request_is_not_retried_forever(client: TestClient) -> None:
+    user_id, _ = make_turn(client)
+
+    # e.g. 400: the provider refuses this exact request, so retrying can't help.
+    stored, memories, message = remember(user_id, FakeLLM(error=LLMRequestError("400")))
+
+    assert (stored, memories) == (0, [])
+    assert message.memories_extracted_at is not None  # done: the sweep won't pick it up again
 
 
 @pytest.mark.integration

@@ -25,6 +25,7 @@ from app.documents.router import router as documents_router
 from app.jobs import JobQueue, create_saq_queue
 from app.llm import LLMError, LLMNotConfiguredError, LLMRateLimitError
 from app.logging_config import configure_logging
+from app.memory.router import router as memory_router
 from app.search.router import router as search_router
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ app.include_router(documents_router)
 app.include_router(search_router)
 app.include_router(answers_router)
 app.include_router(conversations_router)
+app.include_router(memory_router)
 
 
 # LLM failures can surface from any route that uses the model (and from the get_llm

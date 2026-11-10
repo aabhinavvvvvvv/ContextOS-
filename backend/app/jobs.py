@@ -11,7 +11,9 @@ from saq import Queue
 
 from app.config import Settings
 
-INGEST_DOCUMENT_JOB = "ingest_document_job"  # must match the function name in app/worker.py
+# Must match the function names in app/worker.py.
+INGEST_DOCUMENT_JOB = "ingest_document_job"
+REMEMBER_TURN_JOB = "remember_turn_job"
 
 
 def create_saq_queue(settings: Settings) -> Queue:
@@ -35,6 +37,20 @@ class JobQueue:
             retries=3,  # total attempts, for transient failures such as a database restart
             retry_delay=5.0,
             retry_backoff=True,  # wait longer after each failed attempt
+        )
+        return job is not None
+
+    async def enqueue_memory_extraction(self, message_id: uuid.UUID) -> bool:
+        """Queue memory extraction for the turn starting at this user message."""
+        job = await self.queue.enqueue(
+            REMEMBER_TURN_JOB,
+            message_id=str(message_id),
+            key=f"memory:{message_id}",
+            timeout=60,  # one LLM call (30 s timeout) plus embedding a few sentences
+            # One quick retry for blips. Longer outages and rate limits are covered by the
+            # worker's once-a-minute sweep, which re-queues every unextracted turn.
+            retries=2,
+            retry_delay=5.0,
         )
         return job is not None
 

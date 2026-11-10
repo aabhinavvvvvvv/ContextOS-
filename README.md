@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 3 in progress** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. Long-term memory extraction is built and tested; next it runs automatically in the background worker after each turn. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 3 in progress** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. After each turn, the background worker extracts long-term memories (decisions, preferences, tasks, facts the user states). Next: deduplicating and updating memories. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -32,7 +32,7 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
-    worker.py        background worker process: runs ingestion jobs, re-queues unfinished documents
+    worker.py        background worker process: ingestion and memory-extraction jobs, plus once-a-minute sweeps that re-queue unfinished work
   migrations/        Alembic database migrations
   tests/             pytest tests (integration tests use a separate contextos_test database)
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
@@ -64,7 +64,7 @@ uv run uvicorn app.main:app --reload   # API on http://localhost:8000, docs at /
 uv run saq app.worker.worker_settings
 ```
 
-Uploads are saved immediately and ingested by the worker. If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
+Uploads are saved immediately and ingested by the worker; after each `/ask`, the worker also extracts memories from the turn (needs `GEMINI_API_KEY`). If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
 
 ## API
 
@@ -79,6 +79,7 @@ Uploads are saved immediately and ingested by the worker. If the worker is stopp
 | `POST` | `/ask` `{"question": "...", "top_k": 5, "conversation_id": null}` | Grounded answer: hybrid search, then the LLM answers **only** from the retrieved chunks, citing them as `[n]`. Returns `answer`, verified `citations`, token usage and `conversation_id` (send it back to continue the thread; 404 if unknown). In a conversation, a follow-up is first rewritten from the last 3 turns into a standalone question (`standalone_question`, e.g. "Why?" → "Why did we move ingestion to a Redis-backed worker?"), which is what gets searched and answered. The turn is saved only if answering succeeds. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
 | `GET` | `/conversations?limit=50` | Conversations, most recently active first |
 | `GET` | `/conversations/{id}` | One conversation with its messages in order; assistant messages include the citations shown at the time |
+| `GET` | `/memories?limit=50&kind=decision` | Long-term memories, newest first, with `source_message_id` and `conversation_id` (where each was learned). `kind`: `fact`, `decision`, `preference`, `task`. Extracted by the worker a few seconds after each `/ask` |
 | `GET` | `/search?q=...&limit=5&mode=hybrid` | Search chunks, best first, with citation fields. `mode=hybrid` (default): semantic + keyword merged by Reciprocal Rank Fusion, with each method's rank. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank). Scores are only comparable within one mode. |
 
 ```bash

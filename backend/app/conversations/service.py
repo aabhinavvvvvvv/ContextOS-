@@ -6,6 +6,7 @@ and every memory will point back to the message it came from (its provenance).
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import func, select
@@ -18,6 +19,12 @@ TITLE_MAX_CHARS = 80
 
 class ConversationNotFoundError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class RecordedTurn:
+    conversation_id: uuid.UUID
+    user_message_id: uuid.UUID  # memory extraction for the turn is keyed on this message
 
 
 def make_title(question: str) -> str:
@@ -67,8 +74,8 @@ async def record_turn(
     question: str,
     answer: str,
     citations: list[dict[str, Any]],
-) -> uuid.UUID:
-    """Save a question and its answer together, in one transaction. Returns the conversation id.
+) -> RecordedTurn:
+    """Save a question and its answer together, in one transaction.
 
     With no conversation_id, a new conversation is started.
     """
@@ -87,9 +94,12 @@ async def record_turn(
         )
         conversation.updated_at = func.now()  # computed by Postgres at write time
 
+    # Ids are generated here rather than at flush, so they can be returned without a query.
+    turn = RecordedTurn(conversation_id=conversation.id, user_message_id=uuid.uuid4())
     session.add_all(
         [
             Message(
+                id=turn.user_message_id,
                 conversation_id=conversation.id,
                 position=next_position,
                 role="user",
@@ -104,8 +114,7 @@ async def record_turn(
             ),
         ]
     )
-    # Read before commit: a session may expire objects on commit, and reloading an expired
-    # attribute would be hidden I/O, which async SQLAlchemy forbids (MissingGreenlet).
-    saved_id = conversation.id
+    # `turn` was built before commit: a session may expire objects on commit, and reloading an
+    # expired attribute would be hidden I/O, which async SQLAlchemy forbids (MissingGreenlet).
     await session.commit()
-    return saved_id
+    return turn

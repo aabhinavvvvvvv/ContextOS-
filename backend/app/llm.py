@@ -30,6 +30,11 @@ class LLMRateLimitError(LLMError):
     """The provider's quota is used up (HTTP 429). Retrying immediately won't help."""
 
 
+class LLMRequestError(LLMError):
+    """The provider rejected this request (4xx other than 429, e.g. 400 or a safety block).
+    Sending the same request again will fail the same way."""
+
+
 @dataclass(frozen=True)
 class LLMResult:
     text: str
@@ -81,7 +86,7 @@ class LLM:
         except errors.ClientError as exc:
             if exc.code == 429:
                 raise LLMRateLimitError("The LLM provider's rate limit was reached") from exc
-            raise LLMError(f"LLM request rejected: {exc.code} {exc.status}") from exc
+            raise LLMRequestError(f"LLM request rejected: {exc.code} {exc.status}") from exc
         except errors.APIError as exc:  # 5xx, after the SDK's retries
             raise LLMError(f"LLM provider error: {exc.code} {exc.status}") from exc
         except httpx2.HTTPError as exc:  # timeouts and network failures

@@ -2,17 +2,55 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import Row, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.embeddings import Embedder
 from app.llm import LLM
 from app.memory.extraction import extract_memories
-from app.models import Memory, Message
+from app.models import Memory, MemoryKind, Message
 
 logger = logging.getLogger(__name__)
+
+
+async def unextracted_turn_ids(session: AsyncSession, *, limit: int) -> list[uuid.UUID]:
+    """User messages whose memories haven't been extracted yet, oldest first, at most `limit`.
+
+    Used by the worker's sweep. The limit keeps a backlog (e.g. turns recorded before
+    memory existed) from firing dozens of LLM calls at once and using up the per-minute quota.
+    """
+    result = await session.scalars(
+        select(Message.id)
+        .where(Message.role == "user", Message.memories_extracted_at.is_(None))
+        .order_by(Message.created_at, Message.position)
+        .limit(limit)
+    )
+    return list(result.all())
+
+
+async def list_memories(
+    session: AsyncSession, *, limit: int, kind: MemoryKind | None = None
+) -> Sequence[Row]:
+    """Memories newest first, each with the conversation it came from."""
+    query = (
+        select(
+            Memory.id,
+            Memory.kind,
+            Memory.content,
+            Memory.created_at,
+            Memory.source_message_id,
+            Message.conversation_id,
+        )
+        .join(Message, Memory.source_message_id == Message.id)
+        .order_by(Memory.created_at.desc(), Memory.id)
+        .limit(limit)
+    )
+    if kind is not None:
+        query = query.where(Memory.kind == kind)
+    return (await session.execute(query)).all()
 
 
 async def remember_turn(

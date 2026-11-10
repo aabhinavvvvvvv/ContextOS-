@@ -68,11 +68,20 @@ def make_pdf(page_texts: list[str]) -> bytes:
 
 
 class InlineJobQueue:
-    """Test stand-in for app.jobs.JobQueue: runs ingestion immediately, without Redis."""
+    """Test stand-in for app.jobs.JobQueue: runs ingestion immediately, without Redis.
+
+    Memory extraction is only recorded, not run: it would consume the scripted replies of
+    the FakeLLM that tests set up for answering. Memory tests call remember_turn directly.
+    """
 
     def __init__(self, engine: AsyncEngine, embedder: Embedder | FakeEmbedder) -> None:
         self.engine = engine
         self.embedder = embedder
+        self.memory_message_ids: list[uuid.UUID] = []
+
+    async def enqueue_memory_extraction(self, message_id: uuid.UUID) -> bool:
+        self.memory_message_ids.append(message_id)
+        return True
 
     async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:
         await ingest_document(self.engine, document_id, get_settings().upload_dir, self.embedder)

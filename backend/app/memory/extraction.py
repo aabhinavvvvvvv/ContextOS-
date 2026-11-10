@@ -9,7 +9,7 @@ from datetime import date
 from pydantic import BaseModel, Field, ValidationError
 
 from app.answers.service import strip_citations
-from app.llm import LLM
+from app.llm import LLM, LLMRequestError
 from app.models import MemoryKind
 
 logger = logging.getLogger(__name__)
@@ -80,15 +80,20 @@ async def extract_memories(
 ) -> list[ExtractedMemory]:
     """The memories worth keeping from one turn (usually none).
 
-    LLM errors propagate, so the caller can retry later. An unusable reply (invalid JSON,
-    unknown kind) counts as "nothing to remember": retrying would likely repeat it.
+    Rate limits, outages and timeouts propagate, so the caller can retry later. A rejected
+    request or an unusable reply (invalid JSON, unknown kind) counts as "nothing to
+    remember": retrying would repeat it, and a turn retried forever would waste quota.
     """
-    result = await llm.generate(
-        system=EXTRACTION_SYSTEM_PROMPT,
-        prompt=build_extraction_prompt(user_text, answer_text, turn_date),
-        max_output_tokens=512,
-        json_schema=ExtractionResult.model_json_schema(),
-    )
+    try:
+        result = await llm.generate(
+            system=EXTRACTION_SYSTEM_PROMPT,
+            prompt=build_extraction_prompt(user_text, answer_text, turn_date),
+            max_output_tokens=512,
+            json_schema=ExtractionResult.model_json_schema(),
+        )
+    except LLMRequestError as exc:
+        logger.warning("Memory extraction request rejected (%s); keeping none", exc)
+        return []
     try:
         return parse_memories(result.text)
     except ValidationError as exc:
