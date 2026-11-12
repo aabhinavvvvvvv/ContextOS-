@@ -95,6 +95,7 @@ async def ask(
         conversation_id=turn.conversation_id,
         question=request.question,
         standalone_question=answer.standalone_question,
+        sub_questions=answer.sub_questions,
         answer=answer.text,
         citations=citations,
         memory_citations=memory_citations,

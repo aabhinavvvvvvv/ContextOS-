@@ -13,6 +13,8 @@ from app.answers.service import (
     NOT_FOUND_ANSWER,
     SYSTEM_PROMPT,
     build_prompt,
+    plan_question,
+    question_with_parts,
     standalone_question,
 )
 from app.llm import LLM, LLMNotConfiguredError, get_llm
@@ -92,6 +94,57 @@ def test_gemini_answers_from_memories_and_prefers_them_over_an_outdated_document
     assert "[M2]" not in conflict  # the unrelated memory is ignored
     assert "dark" in memory_only.lower() and "[M2]" in memory_only
     assert NOT_FOUND_ANSWER in unknown
+
+
+# Decomposition eval: (question, allowed numbers of sub-questions, words that must each
+# appear in some sub-question). Lowercase substring checks.
+PLAN_CASES = [
+    # The project's example: two lookups; "prepare a plan" is done when answering.
+    (
+        "What did we decide about the API architecture, what tasks are unfinished, and prepare a prioritized plan for today.",
+        (2,),
+        ["api", "task"],
+    ),
+    ("Which LLM do we use and why?", (1,), ["llm"]),  # passes the cheap check, but one question
+    ("Who owns the backend, and when is the demo?", (2,), ["backend", "demo"]),
+    ("What is pgvector, and how does ContextOS use hybrid search?", (2,), ["pgvector", "hybrid"]),
+    ("Compare REST and GraphQL for our API.", (1, 2), ["rest"]),  # splitting a comparison is fine too
+]
+
+
+def test_gemini_splits_only_multi_part_questions() -> None:
+    llm = fresh_llm()
+
+    async def run() -> list:
+        return [await plan_question(llm, question) for question, _, _ in PLAN_CASES]
+
+    failures = []
+    for (question, counts, words), result in zip(PLAN_CASES, asyncio.run(run()), strict=True):
+        parts = [q.lower() for q in result.sub_questions]
+        ok = len(parts) in counts and all(any(w in p for p in parts) for w in words)
+        print(f"\n{'ok  ' if ok else 'FAIL'} {question}")
+        for p in result.sub_questions:
+            print(f"       - {p}")
+        if not ok:
+            failures.append(question[:40])
+
+    assert failures == [], f"{len(failures)}/{len(PLAN_CASES)} cases failed: {failures}"
+
+
+def test_gemini_answers_the_parts_it_can_and_names_the_missing_part() -> None:
+    sources = [source("We chose REST over GraphQL because caching was simpler.", "Decisions > API")]
+    question = question_with_parts(
+        "Which API style did we choose, and what is our database backup schedule?",
+        ["Which API style did we choose?", "What is our database backup schedule?"],
+    )
+
+    [answer] = ask_all([question], sources)
+    print(f"\npartial: {answer!r}")
+
+    assert "REST" in answer and "[1]" in answer  # the part it can answer
+    # Not a whole-answer refusal, and the missing part is named (the model may reuse the
+    # "couldn't find" sentence for that part: seen live).
+    assert answer.strip() != NOT_FOUND_ANSWER and "backup" in answer.lower()
 
 
 # Follow-up rewriting eval: (history, follow-up, the rewrite must contain one of these,

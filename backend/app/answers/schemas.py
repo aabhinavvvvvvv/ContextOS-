@@ -38,6 +38,9 @@ class AskResponse(BaseModel):
     # Follow-ups only: the question as searched and answered, e.g. "Why?" →
     # "Why did we move ingestion to a worker?". Null on a conversation's first question.
     standalone_question: str | None = None
+    # Multi-part questions only: the separate lookups it was split into, e.g. "What did we
+    # decide about the API, and what is unfinished?" → two sub-questions. Empty otherwise.
+    sub_questions: list[str] = []
     answer: str
     citations: list[CitationRead]
     memory_citations: list[MemoryCitationRead]  # memories the answer cites as [Mn]

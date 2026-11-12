@@ -1,14 +1,15 @@
 """The answer workflow as a LangGraph graph.
 
-    START → rewrite → retrieve ─┬─ found something ─→ generate ──→ END
-                                └─ found nothing ───→ not_found ─→ END
+    START → rewrite → plan → retrieve ─┬─ found something ─→ generate ──→ END
+                                       └─ found nothing ───→ not_found ─→ END
 
-Phase 4.1: the same steps answer_question used to run as straight-line code, now as
-nodes and edges. Later phases add planning, tools and a loop as new nodes and edges.
-The building blocks (prompts, citation checks) stay in service.py.
+rewrite: a follow-up becomes standalone. plan: a multi-part question becomes sub-questions.
+retrieve: each sub-question is searched, results merged. The building blocks (prompts,
+citation checks) live in service.py; later phases add tools and a loop as new nodes/edges.
 """
 
 import operator
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Annotated, Literal, TypedDict
@@ -27,6 +28,8 @@ from app.answers.service import (
     build_prompt,
     cited_memories,
     cited_sources,
+    plan_question,
+    question_with_parts,
     standalone_question,
 )
 from app.embeddings import Embedder
@@ -51,7 +54,8 @@ class AnswerState(TypedDict, total=False):  # total=False: keys appear as nodes 
     history: History
     top_k: int
     # Written by the nodes
-    search_question: str  # the question actually searched and answered (standalone)
+    search_question: str  # the question actually answered (standalone)
+    sub_questions: list[str]  # what is searched: [search_question] unless it was split
     hits: list[SearchHit]
     memories: list[RecalledMemory]
     text: str
@@ -74,14 +78,33 @@ async def rewrite(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
     }
 
 
+async def plan(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
+    """Split a multi-part question into sub-questions. No LLM call for a single question."""
+    result = await plan_question(runtime.context.llm, state["search_question"])
+    return {
+        "sub_questions": result.sub_questions,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+    }
+
+
 async def retrieve(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
-    """Hybrid search over document chunks plus the closest current memories (one embedding)."""
+    """For each sub-question: hybrid search over document chunks plus the closest current
+    memories (one embedding serves both). Results are merged without duplicates.
+
+    One after another, not in parallel: all queries share one database session, and a
+    session runs one query at a time.
+    """
     ctx = runtime.context
-    query = state["search_question"]
-    vector = await run_in_threadpool(ctx.embedder.embed_query, query)
-    hits = await hybrid_search(ctx.session, query, vector, limit=state["top_k"])
-    memories = await related_memories(ctx.session, vector, limit=MEMORIES_IN_ANSWER)
-    return {"hits": hits, "memories": memories}
+    hits: dict[uuid.UUID, SearchHit] = {}  # by chunk id; insertion order = rank order
+    memories: dict[uuid.UUID, RecalledMemory] = {}
+    for query in state["sub_questions"]:
+        vector = await run_in_threadpool(ctx.embedder.embed_query, query)
+        for hit in await hybrid_search(ctx.session, query, vector, limit=state["top_k"]):
+            hits.setdefault(hit.chunk_id, hit)  # keep the first (best-ranked) copy
+        for memory in await related_memories(ctx.session, vector, limit=MEMORIES_IN_ANSWER):
+            memories.setdefault(memory.id, memory)
+    return {"hits": list(hits.values()), "memories": list(memories.values())}
 
 
 def found_anything(state: AnswerState) -> Literal["generate", "not_found"]:
@@ -90,7 +113,8 @@ def found_anything(state: AnswerState) -> Literal["generate", "not_found"]:
 
 
 async def generate(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
-    prompt = build_prompt(state["search_question"], state["hits"], state["memories"])
+    question = question_with_parts(state["search_question"], state["sub_questions"])
+    prompt = build_prompt(question, state["hits"], state["memories"])
     result = await runtime.context.llm.generate(system=SYSTEM_PROMPT, prompt=prompt)
     return {
         "text": result.text,
@@ -109,11 +133,13 @@ def not_found(state: AnswerState) -> dict:
 def build_answer_graph():  # returns a CompiledStateGraph
     graph = StateGraph(AnswerState, context_schema=AnswerContext)
     graph.add_node("rewrite", rewrite)
+    graph.add_node("plan", plan)
     graph.add_node("retrieve", retrieve)
     graph.add_node("generate", generate)
     graph.add_node("not_found", not_found)
     graph.add_edge(START, "rewrite")
-    graph.add_edge("rewrite", "retrieve")
+    graph.add_edge("rewrite", "plan")
+    graph.add_edge("plan", "retrieve")
     # The router's Literal return type tells LangGraph the possible next nodes.
     graph.add_conditional_edges("retrieve", found_anything)
     graph.add_edge("generate", END)
@@ -152,4 +178,5 @@ async def answer_question(
         output_tokens=state["output_tokens"],
         standalone_question=state["search_question"] if history else None,
         memory_citations=cited_memories(state["text"], state["memories"]),
+        sub_questions=state["sub_questions"] if len(state["sub_questions"]) > 1 else [],
     )
