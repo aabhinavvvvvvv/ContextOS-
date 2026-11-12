@@ -195,6 +195,20 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
   - An effect depended on an object that is new on every render, so the polling interval was torn down and recreated after each render → depend on the stable `reload` function instead.
   - Exporting helpers from a components file breaks React fast refresh → moved to `format.ts`.
 
+### Phase 9: Deployment
+- **Built:** container images for the API/worker (one image, two commands) and the web app (static build served by Caddy), a production compose file, GitHub Actions CI, and a deployment guide.
+- **Key decisions:**
+  - **Caddy** serves the app, proxies `/api` (same origin, no CORS) and gets and renews HTTPS certificates by itself once `SITE_ADDRESS` is a domain: one small component instead of nginx + certbot.
+  - **Only the web port is public:** Postgres and Redis publish no ports and are reachable only inside the compose network.
+  - **Health-gated start order:** databases healthy → API (runs migrations, then passes its readiness check) → worker and web. The worker never sees an unmigrated schema.
+  - **Docker layer caching:** dependencies are installed before the code is copied, so code changes rebuild in seconds; the uv version is pinned to the one that wrote the lockfile.
+  - **Non-root containers**, secrets only from `.env` / the environment, `.dockerignore` keeping tests and local venvs out of images.
+  - **CI runs the real thing:** pytest against pgvector and Redis service containers (the same images as dev/prod); live LLM tests excluded, so no API key in CI.
+  - **CD left manual on purpose** (`git pull && compose up -d --build`); the automated path is documented.
+- **Verified:** the whole production stack locally: healthy containers, readiness through Caddy, the SPA fallback for deep links, an upload ingested by the containerised worker (model downloaded into its volume) and found by hybrid search.
+- **Numbers:** web image 59 MB; API/worker 866 MB, mostly the ONNX runtime for local embeddings, the price of not paying for an embedding API.
+- **Observed:** the worker's startup sweep re-queued a document that was mid-ingestion; harmless because ingestion is idempotent, the design choice from Phase 1 paying off.
+
 ---
 
 ## 4. Problems we faced: quick reference
@@ -212,6 +226,12 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
 | 9 | Circular imports | two modules needing each other | Split out a small module | Dependency direction matters |
 | 10 | Secret-scan false alarm; empty `rm -rf` variable | shell quoting across Windows → WSL produced empty variables | Scripts with `set -euo pipefail`, never inline variables in destructive commands | Tooling bugs can be dangerous; fail fast |
 | 11 | Tests failing on correct model output | assertions guessed wording | Assert requirements | Evals test behaviour, not phrasing |
+| 12 | A failing agent tool wiped an earlier proposal | `rollback()` undoes the whole request transaction | SAVEPOINT per tool (`begin_nested`) | Scope error recovery to the failed unit |
+| 13 | A settings override was ignored | tools read global settings | Pass request settings through the agent's runtime context | Dependency injection all the way down |
+| 14 | Events in one transaction shared a timestamp | `now()` is fixed per transaction | `clock_timestamp()` | Know what your database's "now" means |
+| 15 | Library APIs differed from memory (google-genai 3, MCP SDK 2 `FastMCP` → `MCPServer`) | API drift between major versions | Inspect the installed version before writing code | Verify, don't recall |
+| 16 | `asyncio.run() cannot be called from a running event loop` | Alembic's env.py starts its own loop | Run migrations before the async main | Know which code owns the event loop |
+| 17 | Stale UI data after quick filter changes | an older response finished last | `cancelled` flag in the effect cleanup | Async UIs need race handling too |
 
 ---
 
@@ -222,6 +242,12 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
 - **Expiry checked at read time** (`expires_on >= current_date`), with no cleanup job.
 - **Keyword-graded live evals:** cheap and deterministic, but they check behaviour coarsely; Phase 8 adds a benchmark.
 - **Simplicity over production hardening:** it's a personal project; production concerns are documented in one line rather than built.
+- **A router before the agent:** a regex sends simple questions down the 1-call fast path; only multi-part, task or action questions pay for planning (up to 4 calls).
+- **Tool choice as JSON structured output through our own LLM wrapper**, not provider-native function calling: the provider stays isolated in one file, and tests use the same fake LLM.
+- **Connectors write ordinary documents:** no new retrieval code per source; the price is re-ingesting changed items.
+- **Polling over webhooks:** no public URL needed; up to 15 minutes of staleness.
+- **Same-origin `/api` via a proxy** instead of CORS.
+- **One VPS + compose** instead of a managed platform: cheapest and simplest; backups are on you.
 
 ---
 
@@ -231,6 +257,10 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
 - **What makes it agentic?** The LLM chooses the steps (which tools, whether to search again) within a step limit; simple questions skip the agent entirely.
 - **How does memory stay correct over time?** Supersede on change, expire time-bound facts, the user can edit and delete, and provenance links every memory to the message it came from.
 - **How do you evaluate an LLM system?** Unit tests with a fake LLM for plumbing; small live evals with keyword checks for behaviour; a 50+ scenario benchmark for retrieval, tool choice, citations and memory (Phase 8).
+- **How do you stop prompt injection from causing damage?** Retrieved text never reaches the planner; the evidence check (which sees it) can only add lookups; actions need human approval and run once; `ALLOWED_ACTIONS` can disable kinds.
+- **How do you guarantee an action runs once?** A guarded state transition (`UPDATE … WHERE status='proposed'`): exactly one request gets the row; then a row lock during execution.
+- **What is MCP and how did you use it?** A standard protocol for AI apps to use external tools/resources; ContextOS is an MCP server (stdio) exposing search, ask, tasks and a memories resource, tested with a real in-memory MCP client.
+- **How do you keep synced data fresh?** Poll with `since`, a stable key per item, replace on content change (SHA-256), prune deleted files.
 - **What would you change for production?** See the per-phase "production note" lines in `PROJECT_PROGRESS.md`: auth/multi-user, managed Postgres, monitoring and alerting, rate limiting, secrets management.
 
 ---
@@ -247,3 +277,12 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
 - [ ] Working vs. episodic vs. semantic memory; supersession; expiry
 - [ ] LangGraph state, nodes, conditional edges, reducers, runtime context
 - [ ] Query decomposition and the cheap pre-check
+- [ ] The agent loop: plan → act → check, stopping conditions, failure degradation, timeline
+- [ ] Tool registries; why the planner can't run arbitrary tools
+- [ ] Connectors: polling with `since`, source keys, replace-on-change, folder sandbox, rate limits
+- [ ] MCP: servers, clients, tools vs. resources, stdio transport
+- [ ] Human-in-the-loop actions: state machine, idempotency, audit log, permissions, injection boundary
+- [ ] Observability: what is recorded, p50/p95, cost estimation
+- [ ] The benchmark: categories, metrics, citation support, limitations
+- [ ] Frontend: same-origin proxy, typed API client, stale-response handling
+- [ ] Deployment: images, compose, Caddy/HTTPS, CI, backups, security checklist

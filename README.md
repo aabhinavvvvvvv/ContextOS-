@@ -49,6 +49,8 @@ docs/                INTERVIEW_GUIDE.md (how it was built, problems and fixes), 
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
 data/models/         downloaded embedding model, ~65 MB, fetched on first use (gitignored)
 docker-compose.yml   local Postgres (pgvector) and Redis
+docker-compose.prod.yml  production: postgres, redis, api, worker, web (Caddy: static app + /api proxy + HTTPS)
+.github/workflows/   CI: backend tests against real Postgres + Redis; frontend lint, type-check, build
 .env.example         template for local configuration
 ```
 
@@ -81,6 +83,14 @@ cd frontend && npm install && npm run dev
 ```
 
 Uploads are saved immediately and ingested by the worker; after each `/ask`, the worker also extracts memories from the turn (needs `GEMINI_API_KEY`). If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
+
+## Production
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build   # http://localhost:8080
+```
+
+Set `SITE_ADDRESS` to a domain for automatic HTTPS, and `API_TOKEN` before exposing it. Hosting options, backups and the security checklist: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Security
 
@@ -144,4 +154,4 @@ curl -F "file=@notes.md" http://localhost:8000/documents
 | 6 | Controlled actions with human approval | ✅ |
 | 7 | Frontend | ✅ |
 | 8 | Evaluation, testing and observability | ✅ |
-| 9 | Deployment | |
+| 9 | Deployment | ✅ |

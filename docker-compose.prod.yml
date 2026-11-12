@@ -1,0 +1,88 @@
+# ContextOS in production: everything in containers, one public port.
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   open http://localhost:${WEB_PORT:-8080}  (or https://<SITE_ADDRESS> with a domain)
+# Reads secrets from .env (never committed). See docs/DEPLOYMENT.md.
+name: contextos-prod
+
+x-app: &app
+  build: ./backend
+  env_file: .env
+  environment:
+    # Inside the compose network services are reached by name on their default ports
+    # (these override the host ports that .env sets for local development).
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+  volumes:
+    - app_data:/data  # uploads, embedding model cache, folder-connector sources
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.0-pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    # No ports: reachable only from the other containers.
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *app
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      # The slim image has no curl; Python's standard library can make the request.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  worker:
+    <<: *app
+    command: ["saq", "app.worker.worker_settings"]
+    depends_on:
+      api: { condition: service_healthy }  # the API runs the migrations first
+
+  web:
+    build: ./frontend
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+      - "${WEB_TLS_PORT:-8443}:443"
+    volumes:
+      - caddy_data:/data  # certificates
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_data:
+  caddy_data:
+  caddy_config:

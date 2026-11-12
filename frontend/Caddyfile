@@ -1,0 +1,19 @@
+# SITE_ADDRESS: ":80" (default) serves plain HTTP on any host name, fine on localhost.
+# Set it to a domain (e.g. contextos.example.com) whose DNS points at the server, and Caddy
+# serves HTTPS on 443 with a certificate it obtains and renews by itself.
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	# The API: same origin as the app, so the browser needs no CORS. handle_path strips
+	# the /api prefix (/api/ask → /ask).
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+
+	# The single-page app: unknown paths fall back to index.html.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

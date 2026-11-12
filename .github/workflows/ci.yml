@@ -1,0 +1,66 @@
+# Continuous integration: on every push and pull request, run the backend test suite against
+# real Postgres (pgvector) and Redis, and type-check, lint and build the frontend.
+# Live LLM tests are excluded by default (pytest addopts), so CI needs no API key.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.0-pg17
+        env:
+          POSTGRES_USER: contextos
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: contextos
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U contextos" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      POSTGRES_USER: contextos
+      POSTGRES_PASSWORD: ci-only-password  # a throwaway CI database, not a secret
+      POSTGRES_DB: contextos
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.6.3"
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: data/models
+          key: fastembed-bge-small-en-v1.5
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
