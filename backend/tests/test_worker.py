@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,17 +51,13 @@ def run_worker_until_idle(llm: FakeLLM | None = None) -> None:
     """
     fake_llm = llm or FakeLLM()
 
-    async def startup_with_fake_llm(ctx: dict) -> None:
-        await startup(ctx)
-        ctx["llm"] = fake_llm
-
     async def run() -> None:
         queue = create_saq_queue(get_settings())
         await queue.connect()
         worker = Worker(
             queue,
             functions=worker_settings["functions"],
-            startup=startup_with_fake_llm,
+            startup=startup,
             shutdown=shutdown,
             burst=True,
             dequeue_timeout=1,  # burst mode: treat 1s with no new job as "queue is empty"
@@ -70,7 +67,11 @@ def run_worker_until_idle(llm: FakeLLM | None = None) -> None:
         finally:
             await queue.disconnect()
 
-    asyncio.run(run())
+    # Replace the LLM *before* startup: startup's memory sweep runs inside startup() and
+    # skips everything when there is no LLM. Setting ctx["llm"] after startup made this test
+    # pass only on machines with a real GEMINI_API_KEY (CI has none) - caught by CI.
+    with patch("app.worker.get_llm", return_value=fake_llm):
+        asyncio.run(run())
 
 
 def set_status(document_id: str, status: str) -> None:

@@ -207,6 +207,7 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
   - **CD left manual on purpose** (`git pull && compose up -d --build`); the automated path is documented.
 - **Verified:** the whole production stack locally: healthy containers, readiness through Caddy, the SPA fallback for deep links, an upload ingested by the containerised worker (model downloaded into its volume) and found by hybrid search.
 - **Numbers:** web image 59 MB; API/worker 866 MB, mostly the ONNX runtime for local embeddings, the price of not paying for an embedding API.
+- **CI caught a real problem on its first run:** a worker test that passed only on machines with a real API key (see problem #18). Reproduced locally by hiding the key, fixed, verified both ways.
 - **Observed:** the worker's startup sweep re-queued a document that was mid-ingestion; harmless because ingestion is idempotent, the design choice from Phase 1 paying off.
 
 ---
@@ -232,6 +233,7 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
 | 15 | Library APIs differed from memory (google-genai 3, MCP SDK 2 `FastMCP` → `MCPServer`) | API drift between major versions | Inspect the installed version before writing code | Verify, don't recall |
 | 16 | `asyncio.run() cannot be called from a running event loop` | Alembic's env.py starts its own loop | Run migrations before the async main | Know which code owns the event loop |
 | 17 | Stale UI data after quick filter changes | an older response finished last | `cancelled` flag in the effect cleanup | Async UIs need race handling too |
+| 18 | First CI run: 179/180, one worker test failed only in CI | the test injected its fake LLM *after* worker startup, whose sweep skips everything without an LLM; it passed locally only because `.env` had a real key | Reproduced locally with `GEMINI_API_KEY=` empty, then patched `get_llm` *before* startup; suite passes with and without a key | Tests must not depend on the developer's environment; CI exists to catch exactly this |
 
 ---
 
