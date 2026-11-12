@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 3 complete** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. After each turn, the background worker extracts long-term memories (decisions, preferences, tasks, facts the user states), skipping ones it already knows and superseding ones that changed. Answers use the most relevant memories alongside the documents and cite them as `[M1]`. Time-bound memories ("on vacation until Friday") expire; memories can be corrected or deleted. Phase 4 (agentic workflows) has started: `/ask` runs as a LangGraph graph and splits multi-part questions into separately searched sub-questions; tools and a retrieval loop come next. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 3 complete** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. After each turn, the background worker extracts long-term memories (decisions, preferences, tasks, facts the user states), skipping ones it already knows and superseding ones that changed. Answers use the most relevant memories alongside the documents and cite them as `[M1]`. Time-bound memories ("on vacation until Friday") expire; memories can be corrected or deleted. Phase 4 complete: `/ask` is a LangGraph agent that plans tool steps for complex questions (search, list all open tasks), checks whether evidence is missing and searches once more if needed, degrades gracefully on failures, and returns a step timeline. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -27,8 +27,8 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     ingestion/       extract text (md/txt/pdf) → chunk → embed → save
     search/          hybrid search: semantic (pgvector, HNSW) + keyword (tsvector, GIN), fused with RRF
     answers/         RAG: retrieve (hybrid search + relevant memories) → grounded prompt → LLM → verified citations;
-                     graph.py runs these steps as a LangGraph graph (rewrite → plan → retrieve → generate / not_found);
-                     plan splits a multi-part question into sub-questions, each searched separately
+                     graph.py: the LangGraph agent (rewrite → plan → act ⇄ check → generate / not_found);
+                     planning.py: tool choice + evidence check (LLM, JSON); tools.py: search, list_tasks
     conversations/   every /ask turn (question + answer + cited sources), the raw record memory is built from
     memory/          long-term memory: the LLM extracts decisions, preferences, tasks and facts the user states (structured JSON output), stored with embedding and source message; `recall.py` finds the current memories closest to a question
     llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
@@ -78,7 +78,7 @@ Uploads are saved immediately and ingested by the worker; after each `/ask`, the
 | `GET` | `/documents?limit=50` | List documents, newest first |
 | `GET` | `/documents/{id}` | One document (404 if unknown). `status`: `pending` → `processing` → `ready` / `failed` (with `error`) |
 | `GET` | `/documents/{id}/chunks` | The document's text chunks in reading order, with `heading` (Markdown) or `page_number` (PDF) |
-| `POST` | `/ask` `{"question": "...", "top_k": 5, "conversation_id": null}` | Grounded answer: hybrid search plus the 3 current memories closest to the question, then the LLM answers **only** from those chunks and memories, citing them as `[n]` and `[Mn]` (if a memory and a document disagree, it says so). Returns `answer`, verified `citations` and `memory_citations`, token usage and `conversation_id` (send it back to continue the thread; 404 if unknown). In a conversation, a follow-up is first rewritten from the last 3 turns into a standalone question (`standalone_question`, e.g. "Why?" → "Why did we move ingestion to a Redis-backed worker?"), which is what gets searched and answered. A multi-part question ("What did we decide about the API, and what is unfinished?") is split into up to 3 sub-questions (`sub_questions`), each searched separately; single questions skip this step (no extra LLM call). If only some parts can be answered, the answer says which parts are missing. The turn is saved only if answering succeeds. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
+| `POST` | `/ask` `{"question": "...", "top_k": 5, "conversation_id": null}` | Grounded answer: hybrid search plus the 3 current memories closest to the question, then the LLM answers **only** from those chunks and memories, citing them as `[n]` and `[Mn]` (if a memory and a document disagree, it says so). Returns `answer`, verified `citations` and `memory_citations`, token usage and `conversation_id` (send it back to continue the thread; 404 if unknown). In a conversation, a follow-up is first rewritten from the last 3 turns into a standalone question (`standalone_question`, e.g. "Why?" → "Why did we move ingestion to a Redis-backed worker?"), which is what gets searched and answered. Complex questions (several parts, or about tasks) are planned by the agent into up to 3 tool steps (`search`, `list_tasks`), each with its own part (`sub_questions`); an evidence check may add one more round; simple questions skip planning (no extra LLM call, at most 4 LLM calls otherwise). `timeline` lists every step with its duration and any error (failed planning/tools degrade instead of failing the request). If only some parts can be answered, the answer says which parts are missing. The turn is saved only if answering succeeds. 503 if no `GEMINI_API_KEY`, 429 if the free quota is used up, 502 on provider errors. |
 | `GET` | `/conversations?limit=50` | Conversations, most recently active first |
 | `GET` | `/conversations/{id}` | One conversation with its messages in order; assistant messages include the citations and memory citations shown at the time |
 | `GET` | `/memories?limit=50&kind=decision&include_history=false` | Current long-term memories, newest first, with `source_message_id` and `conversation_id` (where each was learned). `kind`: `fact`, `decision`, `preference`, `task`. `include_history=true` also lists replaced memories (`superseded_by_id` / `superseded_at`) and expired ones (`expires_on` in the past). Extracted by the worker a few seconds after each `/ask` |
@@ -98,7 +98,7 @@ curl -F "file=@notes.md" http://localhost:8000/documents
 | 1 | FastAPI backend, document ingestion, PostgreSQL, background worker | ✅ |
 | 2 | Embeddings, hybrid retrieval, grounded answers with citations | ✅ |
 | 3 | Persistent memory | ✅ |
-| 4 | Agentic workflows with LangGraph | ⏳ next |
+| 4 | Agentic workflows with LangGraph | ✅ |
 | 5 | Live connectors (GitHub, local docs) and MCP | |
 | 6 | Controlled actions with human approval | |
 | 7 | Frontend | |

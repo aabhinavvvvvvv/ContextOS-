@@ -32,6 +32,13 @@ class MemoryCitationRead(BaseModel):
     created_at: datetime  # when the user said it
 
 
+class TimelineEventRead(BaseModel):
+    step: str  # rewrite, plan, tool:search, tool:list_tasks, check, generate
+    summary: str
+    duration_ms: int
+    error: str | None = None  # set when the step failed and the agent degraded
+
+
 class AskResponse(BaseModel):
     conversation_id: uuid.UUID  # send it back with the next question to continue the thread
     question: str
@@ -47,3 +54,4 @@ class AskResponse(BaseModel):
     sources_considered: int
     input_tokens: int
     output_tokens: int
+    timeline: list[TimelineEventRead] = []  # what the agent did, in order

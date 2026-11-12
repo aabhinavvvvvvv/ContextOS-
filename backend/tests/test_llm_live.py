@@ -9,11 +9,11 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from app.answers.planning import plan_steps
 from app.answers.service import (
     NOT_FOUND_ANSWER,
     SYSTEM_PROMPT,
     build_prompt,
-    plan_question,
     question_with_parts,
     standalone_question,
 )
@@ -96,35 +96,40 @@ def test_gemini_answers_from_memories_and_prefers_them_over_an_outdated_document
     assert NOT_FOUND_ANSWER in unknown
 
 
-# Decomposition eval: (question, allowed numbers of sub-questions, words that must each
-# appear in some sub-question). Lowercase substring checks.
+# Planning eval: (question, allowed numbers of steps, words that must each appear in some
+# step question, tools that must be used). Lowercase substring checks.
 PLAN_CASES = [
-    # The project's example: two lookups; "prepare a plan" is done when answering.
+    # The project's example: a search and the task list; "prepare a plan" is done when answering.
     (
         "What did we decide about the API architecture, what tasks are unfinished, and prepare a prioritized plan for today.",
         (2,),
         ["api", "task"],
+        {"search", "list_tasks"},
     ),
-    ("Which LLM do we use and why?", (1,), ["llm"]),  # passes the cheap check, but one question
-    ("Who owns the backend, and when is the demo?", (2,), ["backend", "demo"]),
-    ("What is pgvector, and how does ContextOS use hybrid search?", (2,), ["pgvector", "hybrid"]),
-    ("Compare REST and GraphQL for our API.", (1, 2), ["rest"]),  # splitting a comparison is fine too
+    ("Which LLM do we use and why?", (1,), ["llm"], {"search"}),  # one question
+    ("Who owns the backend, and when is the demo?", (2,), ["backend", "demo"], {"search"}),
+    ("What is pgvector, and how does ContextOS use hybrid search?", (2,), ["pgvector", "hybrid"], {"search"}),
+    ("What should I work on today?", (1, 2), [], {"list_tasks"}),
 ]
 
 
-def test_gemini_splits_only_multi_part_questions() -> None:
+def test_gemini_plans_steps_and_picks_tools() -> None:
     llm = fresh_llm()
 
     async def run() -> list:
-        return [await plan_question(llm, question) for question, _, _ in PLAN_CASES]
+        return [(await plan_steps(llm, question))[0] for question, *_ in PLAN_CASES]
 
     failures = []
-    for (question, counts, words), result in zip(PLAN_CASES, asyncio.run(run()), strict=True):
-        parts = [q.lower() for q in result.sub_questions]
-        ok = len(parts) in counts and all(any(w in p for p in parts) for w in words)
+    for (question, counts, words, tools), steps in zip(PLAN_CASES, asyncio.run(run()), strict=True):
+        parts = [s.question.lower() for s in steps]
+        ok = (
+            len(steps) in counts
+            and all(any(w in p for p in parts) for w in words)
+            and tools <= {s.tool for s in steps}
+        )
         print(f"\n{'ok  ' if ok else 'FAIL'} {question}")
-        for p in result.sub_questions:
-            print(f"       - {p}")
+        for s in steps:
+            print(f"       - {s.tool}: {s.question}")
         if not ok:
             failures.append(question[:40])
 

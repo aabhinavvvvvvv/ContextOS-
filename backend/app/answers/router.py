@@ -102,4 +102,5 @@ async def ask(
         sources_considered=answer.sources_considered,
         input_tokens=answer.input_tokens,
         output_tokens=answer.output_tokens,
+        timeline=answer.timeline,
     )
