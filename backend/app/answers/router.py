@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.answers import service
+from app.answers.graph import answer_question
 from app.answers.schemas import AskRequest, AskResponse, CitationRead, MemoryCitationRead
 from app.conversations import service as conversations
 from app.db import SessionDep
@@ -44,7 +45,7 @@ async def ask(
         )
         history = [(m.role, m.content) for m in recent]
 
-    answer = await service.answer_question(
+    answer = await answer_question(
         session, embedder, llm, request.question, top_k=request.top_k, history=history
     )
     citations = [

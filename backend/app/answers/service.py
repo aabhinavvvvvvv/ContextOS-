@@ -1,17 +1,16 @@
-"""Retrieval-augmented generation: search the documents and recall memories, then answer
-only from what was found."""
+"""Building blocks for grounded answers: prompts, follow-up rewriting, citation checks.
+
+The workflow that runs them (search documents and recall memories, then answer only from
+what was found) is the graph in graph.py.
+"""
 
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.concurrency import run_in_threadpool
-
-from app.embeddings import Embedder
 from app.llm import LLM
-from app.memory.recall import RecalledMemory, related_memories
-from app.search.service import SearchHit, hybrid_search
+from app.memory.recall import RecalledMemory
+from app.search.service import SearchHit
 
 NOT_FOUND_ANSWER = "I couldn't find this in your documents."
 
@@ -182,44 +181,4 @@ def cited_memories(answer_text: str, memories: Sequence[RecalledMemory]) -> list
         for n in _cited_numbers(_MEMORY_CITATION, answer_text, len(memories))
     ]
 
-
-async def answer_question(
-    session: AsyncSession,
-    embedder: Embedder,
-    llm: LLM,
-    question: str,
-    *,
-    top_k: int,
-    history: History = (),
-) -> Answer:
-    """Answer from the documents and memories. With history, a follow-up is first made standalone."""
-    rewrite = await standalone_question(llm, question, history)
-    standalone = rewrite.question if history else None
-
-    # One embedding serves both lookups: document chunks and memories.
-    query_vector = await run_in_threadpool(embedder.embed_query, rewrite.question)
-    hits = await hybrid_search(session, rewrite.question, query_vector, limit=top_k)
-    memories = await related_memories(session, query_vector, limit=MEMORIES_IN_ANSWER)
-    if not hits and not memories:
-        # Nothing to ground an answer in: don't call the model at all.
-        return Answer(
-            text=NOT_FOUND_ANSWER,
-            citations=[],
-            sources_considered=0,
-            input_tokens=rewrite.input_tokens,
-            output_tokens=rewrite.output_tokens,
-            standalone_question=standalone,
-        )
-
-    result = await llm.generate(
-        system=SYSTEM_PROMPT, prompt=build_prompt(rewrite.question, hits, memories)
-    )
-    return Answer(
-        text=result.text,
-        citations=cited_sources(result.text, hits),
-        sources_considered=len(hits),
-        input_tokens=rewrite.input_tokens + result.input_tokens,
-        output_tokens=rewrite.output_tokens + result.output_tokens,
-        standalone_question=standalone,
-        memory_citations=cited_memories(result.text, memories),
-    )
+# The workflow that uses these pieces (answer_question) is in graph.py.

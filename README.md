@@ -4,7 +4,7 @@
 
 ContextOS is a personal knowledge and workflow assistant. It connects to your documents and GitHub, retrieves relevant evidence with hybrid (semantic + keyword) search, remembers past decisions, and runs multi-step workflows. Every answer cites its sources, and nothing consequential happens without your approval.
 
-> Status: **Phase 3 complete** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. After each turn, the background worker extracts long-term memories (decisions, preferences, tasks, facts the user states), skipping ones it already knows and superseding ones that changed. Answers use the most relevant memories alongside the documents and cite them as `[M1]`. Time-bound memories ("on vacation until Friday") expire; memories can be corrected or deleted. Next: Phase 4, agentic workflows with LangGraph. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
+> Status: **Phase 3 complete** (persistent memory): documents are ingested, searchable (hybrid semantic + keyword) and answerable with cited, grounded answers; every question and answer is saved to a conversation, and follow-ups ("Why?") are understood from the recent turns. After each turn, the background worker extracts long-term memories (decisions, preferences, tasks, facts the user states), skipping ones it already knows and superseding ones that changed. Answers use the most relevant memories alongside the documents and cite them as `[M1]`. Time-bound memories ("on vacation until Friday") expire; memories can be corrected or deleted. Phase 4 (agentic workflows) has started: `/ask` now runs as a LangGraph graph, the base that planning, tools and a retrieval loop will extend. See [PROJECT_PROGRESS.md](PROJECT_PROGRESS.md).
 
 ## Architecture
 
@@ -26,7 +26,8 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     documents/       upload and listing (router → service → models)
     ingestion/       extract text (md/txt/pdf) → chunk → embed → save
     search/          hybrid search: semantic (pgvector, HNSW) + keyword (tsvector, GIN), fused with RRF
-    answers/         RAG: retrieve (hybrid search + relevant memories) → grounded prompt → LLM → verified citations
+    answers/         RAG: retrieve (hybrid search + relevant memories) → grounded prompt → LLM → verified citations;
+                     graph.py runs these steps as a LangGraph graph (rewrite → retrieve → generate / not_found)
     conversations/   every /ask turn (question + answer + cited sources), the raw record memory is built from
     memory/          long-term memory: the LLM extracts decisions, preferences, tasks and facts the user states (structured JSON output), stored with embedding and source message; `recall.py` finds the current memories closest to a question
     llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
