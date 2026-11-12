@@ -11,24 +11,12 @@ from starlette.concurrency import run_in_threadpool
 from app.embeddings import Embedder
 from app.llm import LLM
 from app.memory.extraction import extract_memories
+from app.memory.recall import related_memories
 from app.models import Memory, MemoryKind, Message
 
 logger = logging.getLogger(__name__)
 
 RELATED_MEMORIES = 5  # current memories shown to the extractor, so it can skip or replace them
-
-
-async def related_memories(
-    session: AsyncSession, query_vector: list[float], *, limit: int
-) -> Sequence[Row]:
-    """The current (not superseded) memories closest in meaning to the query vector."""
-    result = await session.execute(
-        select(Memory.id, Memory.content)
-        .where(Memory.superseded_by_id.is_(None))
-        .order_by(Memory.embedding.cosine_distance(query_vector))
-        .limit(limit)
-    )
-    return result.all()
 
 
 async def unextracted_turn_ids(session: AsyncSession, *, limit: int) -> list[uuid.UUID]:

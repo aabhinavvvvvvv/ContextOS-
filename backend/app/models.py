@@ -168,6 +168,10 @@ class Message(Base):
     citations: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB, default=list, server_default="[]"
     )
+    # Assistant messages: the memories it cited as [Mn], copied for the same reason.
+    memory_citations: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, default=list, server_default="[]"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -74,6 +74,7 @@ async def record_turn(
     question: str,
     answer: str,
     citations: list[dict[str, Any]],
+    memory_citations: list[dict[str, Any]] | None = None,
 ) -> RecordedTurn:
     """Save a question and its answer together, in one transaction.
 
@@ -111,6 +112,7 @@ async def record_turn(
                 role="assistant",
                 content=answer,
                 citations=citations,
+                memory_citations=memory_citations or [],
             ),
         ]
     )

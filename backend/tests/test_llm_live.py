@@ -5,7 +5,7 @@
 
 import asyncio
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -17,6 +17,7 @@ from app.answers.service import (
 )
 from app.llm import LLM, LLMNotConfiguredError, get_llm
 from app.memory.extraction import extract_memories
+from app.memory.recall import RecalledMemory
 from app.search.service import SearchHit
 
 pytestmark = pytest.mark.llm
@@ -63,6 +64,34 @@ def test_gemini_answers_from_the_source_and_cites_it_or_admits_it_cannot() -> No
 
     assert "REST" in answered and "[1]" in answered
     assert NOT_FOUND_ANSWER in unanswerable
+
+
+def test_gemini_answers_from_memories_and_prefers_them_over_an_outdated_document() -> None:
+    sources = [source("ContextOS uses Gemini as its LLM because the free tier is enough.", "Stack > LLM")]
+    said_on = datetime(2026, 11, 12, tzinfo=UTC)
+    memories = [
+        RecalledMemory(uuid.uuid4(), "decision", "The team switched the ContextOS LLM from Gemini to Claude on 2026-11-12.", said_on),
+        RecalledMemory(uuid.uuid4(), "preference", "The user prefers a dark theme in their editor.", said_on),
+    ]
+    llm = fresh_llm()
+
+    async def run() -> list[str]:
+        return [
+            (await llm.generate(system=SYSTEM_PROMPT, prompt=build_prompt(q, sources, memories))).text
+            for q in [
+                "Which LLM does ContextOS use?",  # memory vs. outdated document
+                "Which editor theme does the user like?",  # only a memory knows
+                "What is our database backup schedule?",  # nobody knows
+            ]
+        ]
+
+    conflict, memory_only, unknown = asyncio.run(run())
+    print(f"\nconflict:    {conflict!r}\nmemory only: {memory_only!r}\nunknown:     {unknown!r}")
+
+    assert "claude" in conflict.lower() and "[M1]" in conflict
+    assert "[M2]" not in conflict  # the unrelated memory is ignored
+    assert "dark" in memory_only.lower() and "[M2]" in memory_only
+    assert NOT_FOUND_ANSWER in unknown
 
 
 # Follow-up rewriting eval: (history, follow-up, the rewrite must contain one of these,

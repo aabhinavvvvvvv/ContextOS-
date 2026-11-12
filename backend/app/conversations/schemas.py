@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from app.answers.schemas import CitationRead
+from app.answers.schemas import CitationRead, MemoryCitationRead
 
 
 class ConversationRead(BaseModel):
@@ -26,6 +26,7 @@ class MessageRead(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     citations: list[CitationRead]  # empty for user messages
+    memory_citations: list[MemoryCitationRead]  # empty for user messages
     created_at: datetime
 
 

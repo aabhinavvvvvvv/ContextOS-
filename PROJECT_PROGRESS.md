@@ -4,9 +4,9 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Current state
 
-- **Phase:** **Phase 3 in progress** (persistent memory). 3.1–3.4 done (2026-11-12): memories are extracted in the background, deduplicated and superseded when they change.
+- **Phase:** **Phase 3 in progress** (persistent memory). 3.1–3.5 done (2026-11-12): memories are extracted in the background, deduplicated, superseded when they change, and used (and cited as [Mn]) when answering.
 - **Working style (2026-11-12):** personal project, not production. Write the simplest code that covers the full scope; no new hardening layers (locks, race tests, multi-run evals) unless needed for normal single-user use. One live eval run is enough unless results look shaky.
-- **Next step:** Phase 3.5, use memories when answering. In `/ask`, embed the (standalone) question, fetch the top few current memories (cosine distance, maybe a small cutoff), and add them to the answer prompt as a separate `<memory id="M1" …>` block next to the document `<source>` blocks; the model may cite them as [M1]; return them in the response as `memories_used`. Answer prompt rules: memories are what the user told us (with date), documents are evidence; if they disagree, prefer the newer and say so. Add an HNSW index on memories.embedding only if needed (small table: exact scan is fine).
+- **Next step:** Phase 3.6, the last memory step: memory management and expiry. `DELETE /memories/{id}` (the user removes a wrong memory), `PATCH /memories/{id}` (the user corrects one: re-embed the new text), and simple expiry: a nullable `memories.expires_at` that extraction fills for time-bound memories ("until Friday", "this sprint"), excluded from recall once it passes. Keep it simple. Then Phase 3 is complete → Phase 4 (LangGraph).
 - **Phase 3 plan:** 3.1 conversations ✅ → 3.2 working memory (follow-ups) ✅ → 3.3a `memories` table + extraction ✅ → 3.3b extraction as a background job ✅ (semantic facts/decisions/preferences with provenance: source message id, timestamps) → 3.4 dedup and updates (supersede, don't overwrite: `superseded_by`, `valid_from`/`valid_to`) → 3.5 memory retrieval into `/ask` (cited as memory, not documents) → 3.6 expiry/staleness + memory management endpoints (list, edit, delete).
 - **Known data issue:** the dev DB's README.md is the 1.5 version (no worker instructions). Re-uploading creates a second, conflicting version. Document versioning/replacement belongs to "resolve outdated information" (Phases 3/5).
 - **Running locally:** Docker Desktop → `docker compose up -d` → from `backend/`: `uv run uvicorn app.main:app --reload` and, in a second terminal, `uv run saq app.worker.worker_settings`.
@@ -57,10 +57,10 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 - [x] 3.4 Dedup and updates (2026-11-12), no extra LLM call: `remember_turn` embeds the user message (`embed_query`), fetches the 5 closest current memories (`related_memories`, `superseded_by_id IS NULL`), and shows them numbered in the extraction prompt ("Existing memories: [1] …"). The model skips known facts and returns `replaces: [n]` for changed ones; code inserts the new memory, flushes, then sets the old one's `superseded_by_id` + `superseded_at` (never deleted; FK `ON DELETE SET NULL`, migration `351e349e1d89`). `parse_memories` drops `replaces` numbers that don't exist. Prompt: one fact per memory (example deliberately different from the eval case), a finished task becomes a fact. `GET /memories` shows current memories; `include_superseded=true` shows history. Live: dedup/update eval 5/5; extraction eval 7/8 → after the prompt fix 8/8; finished task → `fact`, replaces [1]. 120 tests pass (+4 live).
 
+- [x] 3.5 Memories in answers (2026-11-12): `/ask` reuses the question's embedding to fetch the 3 closest current memories (`MEMORIES_IN_ANSWER`; new `app/memory/recall.py` with `RecalledMemory` + `related_memories`, split out to avoid an import cycle answers → memory.service → extraction → answers). `build_prompt` adds dated `<memory id="M1" kind=… date=…>` blocks before the sources ("Sources: none" if there are no hits); the system prompt says use a memory only if it helps, and if a memory and a document disagree, say so, cite both, lead with the memory. `[Mn]` citations verified like `[n]` (shared `_cited_numbers`); `strip_citations` also strips `[Mn]`. The model is called when there are memories even with no document hits. Response and assistant messages carry `memory_citations` (JSONB snapshot, migration `47cc28207f8f`). Live check passed first run: memory vs. outdated doc → "switched … to Claude [M1]. (The older document states it uses Gemini [1].)", irrelevant memory ignored, memory-only answer cited [M2], unknown → refusal. 127 tests pass (+5 live).
+
 ## Pending (Phase 3: Persistent memory)
-- [ ] 3.5 Memory retrieval into `/ask`
-- [ ] 3.6 Expiry/staleness + memory management (edit, delete)
-- [ ] Memory extraction, deduplication, retrieval, updates and expiration, provenance
+- [ ] 3.6 Memory management (edit, delete) + expiry
 
 ## Decisions log
 | Decision | Reason |
@@ -151,7 +151,7 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | Idempotency via `messages.memories_extracted_at`, set in the same transaction as the inserts | Exactly-once effect even if the job runs twice; no unique key exists for "the same memory" |
 | No DB connection held during the LLM call; lock + re-check only at save time | Same lesson as `record_turn`: locks for milliseconds; a lost race costs one wasted LLM call, never duplicates |
 | Turn date (with weekday) in the extraction prompt | Relative dates ("by Friday") become absolute and stay true |
-| No HNSW index on memories yet | Added with memory retrieval (3.5), when a query uses it |
+| No HNSW index on memories | A personal memory table stays small (hundreds of rows): an exact scan is fast and never misses; add the index if it grows to many thousands |
 | Memory extraction is a background job, not part of `/ask` | The user doesn't wait for (or pay latency for) learning; extraction failures never break answers |
 | The sweep is the long-term retry; jobs retry only once | One mechanism for every failure mode (lost job, outage, rate limit, crash); jobs stay short |
 | Sweep batch of 5 per minute | Bounds background LLM use, so backfill can't starve interactive `/ask` of the per-minute quota |
@@ -160,6 +160,9 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | Supersede, never overwrite or delete | "What's true now" and "what did we believe before, and when did it change" both stay answerable |
 | Atomic memories (one fact each) | A change to one fact replaces only that memory |
 | Prioritise simplicity over production hardening (user's request, 2026-11-12) | Personal learning project; finish the whole roadmap with readable code |
+| Memories in answers: top 3 by similarity, no distance cutoff; the model decides relevance | A cutoff needs tuning per model; 3 short memories cost ~60 tokens, and the live check showed an irrelevant one is ignored |
+| Memories cited as `[Mn]`, separate from document `[n]` | The user can tell "you told me this" from "a document says this"; each is verified against what was actually shown |
+| Memory vs. document conflict: say so, cite both, lead with the memory | Memories are dated and superseded when they change, documents can be stale (e.g. the old README); showing both keeps the user in charge |
 
 ## Environment notes
 - Develop inside WSL Ubuntu 24.04. IDE: **Antigravity IDE**. Open the project via Command Palette → `Remote-WSL: Connect to WSL using Distro...` → Ubuntu-24.04 → open `/home/aabhinavvvvvvv/personal_projects/contextOS`. Install the Python and Pyrefly extensions "in WSL", then select the interpreter `backend/.venv/bin/python`.

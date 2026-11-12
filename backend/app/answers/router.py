@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.answers import service
-from app.answers.schemas import AskRequest, AskResponse, CitationRead
+from app.answers.schemas import AskRequest, AskResponse, CitationRead, MemoryCitationRead
 from app.conversations import service as conversations
 from app.db import SessionDep
 from app.embeddings import Embedder, get_embedder
@@ -59,14 +59,25 @@ async def ask(
         )
         for c in answer.citations
     ]
+    memory_citations = [
+        MemoryCitationRead(
+            number=c.number,
+            memory_id=c.memory.id,
+            kind=c.memory.kind,
+            content=c.memory.content,
+            created_at=c.memory.created_at,
+        )
+        for c in answer.memory_citations
+    ]
     try:
         turn = await conversations.record_turn(
             session,
             conversation_id=request.conversation_id,
             question=request.question,
             answer=answer.text,
-            # mode="json": UUIDs become strings, so the list can be stored as JSONB.
+            # mode="json": UUIDs and datetimes become strings, so the lists can be stored as JSONB.
             citations=[c.model_dump(mode="json") for c in citations],
+            memory_citations=[c.model_dump(mode="json") for c in memory_citations],
         )
     except conversations.ConversationNotFoundError:
         # Deleted between the check above and now.
@@ -85,6 +96,7 @@ async def ask(
         standalone_question=answer.standalone_question,
         answer=answer.text,
         citations=citations,
+        memory_citations=memory_citations,
         sources_considered=answer.sources_considered,
         input_tokens=answer.input_tokens,
         output_tokens=answer.output_tokens,

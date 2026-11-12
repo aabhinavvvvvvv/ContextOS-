@@ -1,6 +1,7 @@
 """API shapes for grounded answers."""
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,14 @@ class CitationRead(BaseModel):
     text: str
 
 
+class MemoryCitationRead(BaseModel):
+    number: int  # matches the [Mn] in the answer text
+    memory_id: uuid.UUID
+    kind: str
+    content: str
+    created_at: datetime  # when the user said it
+
+
 class AskResponse(BaseModel):
     conversation_id: uuid.UUID  # send it back with the next question to continue the thread
     question: str
@@ -31,6 +40,7 @@ class AskResponse(BaseModel):
     standalone_question: str | None = None
     answer: str
     citations: list[CitationRead]
+    memory_citations: list[MemoryCitationRead]  # memories the answer cites as [Mn]
     sources_considered: int
     input_tokens: int
     output_tokens: int
