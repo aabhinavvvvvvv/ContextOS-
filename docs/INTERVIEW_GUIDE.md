@@ -183,6 +183,18 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
   - Metrics must not break the request they measure → recording uses its own short transaction and swallows (logs) its own errors.
   - Grouping requests by the **route template** (`/documents/{document_id}`), not the URL, so metrics aggregate per endpoint.
 
+### Phase 7: Frontend
+- **Built:** React 19 + TypeScript + Tailwind SPA. Chat with citations (GitHub links), memory citations, the agent's step timeline and inline approve/reject for proposed actions; pages for documents, memories, the actions inbox + audit log, connectors, metrics and settings. Responsive, with dark mode.
+- **Key decisions:**
+  - **Same-origin `/api`:** Vite's dev proxy and Caddy in production forward `/api/*` to FastAPI, so there is no CORS configuration and the browser never sees a second origin.
+  - **One API module** (`api.ts`) with typed functions; `types.ts` mirrors the Pydantic models, so a backend change shows up as a TypeScript error.
+  - **No router or state library:** hash routing and one small hook (`useApi`) are enough at this size.
+  - **Auth:** the API token lives in `localStorage`, with every access wrapped in try/catch (private windows can throw).
+- **Problems → fixes (found by the linter, then reasoned through):**
+  - **Stale-response race:** switching the memory filter quickly could let an older, slower response overwrite a newer one. The effect now sets a `cancelled` flag in its cleanup function and ignores results that arrive after it.
+  - An effect depended on an object that is new on every render, so the polling interval was torn down and recreated after each render → depend on the stable `reload` function instead.
+  - Exporting helpers from a components file breaks React fast refresh → moved to `format.ts`.
+
 ---
 
 ## 4. Problems we faced: quick reference

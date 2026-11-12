@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* Light and dark themes follow the operating system (Tailwind's default `dark:` variant). */
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
+}

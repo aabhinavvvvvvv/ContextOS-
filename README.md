@@ -43,6 +43,9 @@ backend/             FastAPI application (Python 3.12, managed by uv)
   migrations/        Alembic database migrations
   evals/             benchmark: 60 scenarios over a fictional project (corpus/, memories.json, run.py); see docs/EVALUATION.md
   tests/             pytest tests (integration tests use a separate contextos_test database)
+frontend/            React + TypeScript + Tailwind UI (Vite): chat with citations and agent timeline,
+                     documents, memories, actions inbox + audit log, connectors, metrics, settings
+docs/                INTERVIEW_GUIDE.md (how it was built, problems and fixes), EVALUATION.md
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
 data/models/         downloaded embedding model, ~65 MB, fetched on first use (gitignored)
 docker-compose.yml   local Postgres (pgvector) and Redis
@@ -70,6 +73,11 @@ uv run uvicorn app.main:app --reload   # API on http://localhost:8000, docs at /
 
 # 4. Worker (second terminal, from backend/): processes uploaded documents
 uv run saq app.worker.worker_settings
+```
+
+```bash
+# 5. Frontend (third terminal): http://localhost:5173
+cd frontend && npm install && npm run dev
 ```
 
 Uploads are saved immediately and ingested by the worker; after each `/ask`, the worker also extracts memories from the turn (needs `GEMINI_API_KEY`). If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
@@ -132,8 +140,8 @@ curl -F "file=@notes.md" http://localhost:8000/documents
 | 2 | Embeddings, hybrid retrieval, grounded answers with citations | ✅ |
 | 3 | Persistent memory | ✅ |
 | 4 | Agentic workflows with LangGraph | ✅ |
-| 5 | Live connectors (GitHub, local docs) and MCP | |
-| 6 | Controlled actions with human approval | |
-| 7 | Frontend | |
-| 8 | Evaluation, testing and observability | |
+| 5 | Live connectors (GitHub, local docs) and MCP | ✅ |
+| 6 | Controlled actions with human approval | ✅ |
+| 7 | Frontend | ✅ |
+| 8 | Evaluation, testing and observability | ✅ |
 | 9 | Deployment | |
