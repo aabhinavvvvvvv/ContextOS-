@@ -259,3 +259,61 @@ class Memory(Base):
     # Time-bound memories ("on vacation this week"): the last day they are true. After it,
     # the memory is no longer recalled. NULL = true until something replaces it.
     expires_on: Mapped[date | None] = mapped_column(Date)
+
+
+ACTION_KINDS = ("create_task", "create_github_issue")
+ACTION_STATUSES = ("proposed", "approved", "rejected", "executed", "failed")
+
+
+def _in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN (" + ", ".join(f"'{v}'" for v in values) + ")"
+
+
+class Action(Base):
+    """Something the agent proposed doing. Runs only after the user approves it.
+
+    proposed → approved → executed | failed, or proposed → rejected. Each transition is a
+    guarded UPDATE (WHERE status = <expected>), so an action can't be approved or run twice.
+    """
+
+    __tablename__ = "actions"
+    __table_args__ = (
+        CheckConstraint(_in("kind", ACTION_KINDS), name="kind_valid"),
+        CheckConstraint(_in("status", ACTION_STATUSES), name="status_valid"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, default="proposed", server_default="proposed")
+    summary: Mapped[str] = mapped_column(Text)  # what the user approves, in plain words
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)  # the exact inputs that will run
+    # Provenance: the turn that proposed it (SET NULL: the record outlives the conversation).
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL")
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # e.g. the created issue's URL
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class AuditEvent(Base):
+    """Append-only record of consequential events: who did what, to what, when."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    # clock_timestamp(), not now(): now() is fixed for a whole transaction, so several
+    # events written together would share one timestamp and lose their order.
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp(), index=True
+    )
+    actor: Mapped[str] = mapped_column(Text)  # "user", "agent" or "system"
+    event: Mapped[str] = mapped_column(Text)  # e.g. "action.approved", "memory.deleted"
+    target_type: Mapped[str] = mapped_column(Text)
+    target_id: Mapped[str] = mapped_column(Text)
+    detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")

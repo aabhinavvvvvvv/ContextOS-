@@ -26,6 +26,8 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     documents/       upload and listing (router → service → models)
     ingestion/       extract text (md/txt/pdf) → chunk → embed → save
     search/          hybrid search: semantic (pgvector, HNSW) + keyword (tsvector, GIN), fused with RRF
+    actions/         proposed actions, the approval flow (approve → execute exactly once), audit log
+    auth.py          optional API token (Bearer) on every route except /health
     answers/         RAG: retrieve (hybrid search + relevant memories) → grounded prompt → LLM → verified citations;
                      graph.py: the LangGraph agent (rewrite → plan → act ⇄ check → generate / not_found);
                      planning.py: tool choice + evidence check (LLM, JSON); tools.py: search, list_tasks
@@ -70,6 +72,13 @@ uv run saq app.worker.worker_settings
 
 Uploads are saved immediately and ingested by the worker; after each `/ask`, the worker also extracts memories from the turn (needs `GEMINI_API_KEY`). If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
 
+## Security
+
+- **Human in the loop:** the agent can only *propose* actions; `POST /actions/{id}/approve` is the only thing that runs one, and a guarded state transition makes it run at most once.
+- **Prompt injection:** the planner sees only the user's question (never retrieved documents), and the evidence check, which does see them, can only add lookups, not actions.
+- **Permissions:** `ALLOWED_ACTIONS` limits which kinds can be proposed or approved. **Auth:** set `API_TOKEN` to require `Authorization: Bearer <token>` on every route except `/health`.
+- **Audit:** every consequential event is recorded in `audit_log`.
+
 ## MCP server
 
 ContextOS can be used from any MCP client (Claude Desktop, IDE assistants). The client starts it over stdio:
@@ -97,6 +106,10 @@ Tools: `search_knowledge`, `ask`, `list_open_tasks`. Resource: `contextos://memo
 | `GET` | `/memories?limit=50&kind=decision&include_history=false` | Current long-term memories, newest first, with `source_message_id` and `conversation_id` (where each was learned). `kind`: `fact`, `decision`, `preference`, `task`. `include_history=true` also lists replaced memories (`superseded_by_id` / `superseded_at`) and expired ones (`expires_on` in the past). Extracted by the worker a few seconds after each `/ask` |
 | `PATCH` | `/memories/{id}` `{"content": "..."}` | Correct a memory's wording (re-embedded). 404 if unknown, 422 if blank |
 | `DELETE` | `/memories/{id}` | Forget a memory (204). If it had replaced an older memory, that one becomes current again. 404 if unknown |
+| `GET` | `/actions?status=proposed` | Actions the agent proposed ("Add a task to…", "Open an issue for…"), newest first. Nothing runs until approved |
+| `POST` | `/actions/{id}/approve` | Approve and run it now: `executed` with `result` (new task memory / GitHub issue URL) or `failed` with `error`. 409 if already decided, 403 if its kind isn't in `ALLOWED_ACTIONS` |
+| `POST` | `/actions/{id}/reject` | Reject it; it can never run |
+| `GET` | `/audit?limit=100` | Audit log, newest first: proposals, approvals, executions, memory edits/deletions, connector changes |
 | `GET` | `/connectors` | Connected sources with `last_status` (`never`/`ok`/`error`), `last_error`, `last_synced_at` |
 | `POST` | `/connectors` `{"kind": "github", "name": "owner/repo"}` or `{"kind": "folder", "name": "notes"}` | Connect a GitHub repository or a folder inside `FOLDER_ROOT` (201; 400 invalid or outside the root; 409 already connected). The first sync is queued at once; the worker re-syncs every 15 minutes. Synced items become documents (`source`, `source_url`), and citations link to them |
 | `POST` | `/connectors/{id}/sync` | Sync now (202) |

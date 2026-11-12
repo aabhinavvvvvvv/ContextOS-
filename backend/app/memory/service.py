@@ -8,6 +8,7 @@ from sqlalchemy import Row, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.actions.service import audit
 from app.embeddings import Embedder
 from app.llm import LLM
 from app.memory.extraction import extract_memories
@@ -81,6 +82,7 @@ async def edit_memory(
     )
     if result.rowcount == 0:
         return None
+    audit(session, "user", "memory.edited", "memory", memory_id, {"content": content})
     await session.commit()
     return await get_memory(session, memory_id)
 
@@ -97,6 +99,8 @@ async def delete_memory(session: AsyncSession, memory_id: uuid.UUID) -> bool:
         .values(superseded_by_id=None, superseded_at=None)
     )
     result = await session.execute(delete(Memory).where(Memory.id == memory_id))
+    if result.rowcount:
+        audit(session, "user", "memory.deleted", "memory", memory_id)
     await session.commit()
     return result.rowcount > 0
 

@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from app.actions.service import audit
 from app.config import Settings
 from app.connectors.sources import (
     SourceError,
@@ -51,6 +52,7 @@ async def create_connector(session: AsyncSession, settings: Settings, kind: str,
         await run_in_threadpool(resolve_folder, settings.folder_root, name)
     connector = Connector(id=uuid.uuid4(), kind=kind, name=name)
     session.add(connector)
+    audit(session, "user", "connector.created", "connector", connector.id, {"kind": kind, "name": name})
     try:
         await session.commit()
     except IntegrityError:
@@ -66,6 +68,8 @@ async def list_connectors(session: AsyncSession) -> list[Connector]:
 async def delete_connector(session: AsyncSession, connector_id: uuid.UUID) -> bool:
     """Remove a source and everything it synced (documents and chunks cascade)."""
     result = await session.execute(delete(Connector).where(Connector.id == connector_id))
+    if result.rowcount:
+        audit(session, "user", "connector.deleted", "connector", connector_id)
     await session.commit()
     return result.rowcount > 0
 

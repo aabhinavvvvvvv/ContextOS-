@@ -17,7 +17,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.actions.router import router as actions_router
 from app.answers.router import router as answers_router
+from app.auth import require_api_token
 from app.config import get_settings
 from app.connectors.router import router as connectors_router
 from app.conversations.router import router as conversations_router
@@ -47,13 +49,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await app.state.db_engine.dispose()
 
 
-app = FastAPI(title="ContextOS API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="ContextOS API",
+    version="0.1.0",
+    lifespan=lifespan,
+    # Applied to every route; a no-op unless API_TOKEN is set (see app/auth.py).
+    dependencies=[Depends(require_api_token)],
+)
 app.include_router(documents_router)
 app.include_router(search_router)
 app.include_router(answers_router)
 app.include_router(conversations_router)
 app.include_router(memory_router)
 app.include_router(connectors_router)
+app.include_router(actions_router)
 
 
 # LLM failures can surface from any route that uses the model (and from the get_llm

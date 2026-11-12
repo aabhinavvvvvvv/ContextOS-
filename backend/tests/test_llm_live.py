@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from app.answers.planning import plan_steps
+from app.answers.planning import ACTION_TOOLS, plan_steps
 from app.answers.service import (
     NOT_FOUND_ANSWER,
     SYSTEM_PROMPT,
@@ -110,6 +110,10 @@ PLAN_CASES = [
     ("Who owns the backend, and when is the demo?", (2,), ["backend", "demo"], {"search"}),
     ("What is pgvector, and how does ContextOS use hybrid search?", (2,), ["pgvector", "hybrid"], {"search"}),
     ("What should I work on today?", (1, 2), [], {"list_tasks"}),
+    # Actions: proposed only when asked; asking ABOUT issues is a lookup.
+    ("Remind me to renew the domain by Friday.", (1,), ["domain"], {"propose_task"}),
+    ("Open a GitHub issue for the login timeout bug.", (1,), ["login"], {"propose_github_issue"}),
+    ("What issues are open in our repo?", (1,), ["issue"], {"search"}),
 ]
 
 
@@ -126,6 +130,7 @@ def test_gemini_plans_steps_and_picks_tools() -> None:
             len(steps) in counts
             and all(any(w in p for p in parts) for w in words)
             and tools <= {s.tool for s in steps}
+            and ({s.tool for s in steps} & ACTION_TOOLS) <= tools  # no unrequested actions
         )
         print(f"\n{'ok  ' if ok else 'FAIL'} {question}")
         for s in steps:

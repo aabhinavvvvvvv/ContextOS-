@@ -5,6 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from app.actions.schemas import ActionRead
+
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
@@ -56,3 +58,5 @@ class AskResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     timeline: list[TimelineEventRead] = []  # what the agent did, in order
+    # Actions the agent proposed; nothing runs until POST /actions/{id}/approve.
+    proposed_actions: list[ActionRead] = []

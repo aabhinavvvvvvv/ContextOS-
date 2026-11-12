@@ -156,6 +156,22 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
   - Inline shell variables came out empty again (`$f` in `wsl bash -c '...'`) → scripts for anything with variables.
 - **Result:** a real sync of the project's own public repo: 30 commits → 30 searchable documents.
 
+### Phase 6: Controlled actions
+- **Built:** the agent *proposes* (add a task, open a GitHub issue), the user approves or rejects, and approval executes exactly once; an audit log of every consequential event; an allow-list of action kinds; optional bearer-token auth.
+- **Key ideas:**
+  - **Human in the loop:** the model has no path to side effects; only `POST /actions/{id}/approve` (a user request) runs anything.
+  - **Idempotency by state machine:** `UPDATE actions SET status='approved' WHERE id=… AND status='proposed'`: of two simultaneous approvals exactly one updates a row; the other gets 409. Execution then locks the row (`FOR UPDATE`).
+  - **Prompt-injection boundary:** retrieved text (documents, GitHub issues) can contain instructions. The planner never sees it (only today's date and the user's question), and the evidence check, which does see it, may only add lookups. Defence in depth: even a bad proposal still needs approval.
+  - **Auditability:** append-only `audit_log` written in the *same transaction* as the change, so an event exists if and only if the change happened.
+  - **Provenance:** a task created by approval points at the message that proposed it.
+  - **Constant-time token comparison** (`secrets.compare_digest`) against timing attacks.
+- **Problems → fixes:**
+  - **A failing tool wiped an earlier proposal:** Phase 4's `act` did `session.rollback()` after a tool error, undoing *everything* in the request's transaction. Fixed with a **savepoint per tool** (`begin_nested()`), plus a regression test.
+  - **Tools read global settings** (`get_settings()`), so a per-request override (`ALLOWED_ACTIONS` in a test) was ignored. Fixed by passing the request's `Settings` through the LangGraph runtime context: dependency injection all the way down.
+  - **Audit events in one transaction shared a timestamp** (`now()` is per transaction, the same lesson as message ordering in Phase 3) → `clock_timestamp()`.
+  - **Payloads copied the request** ("Remind me to … by Friday"): the planner didn't know the date and ignored an example. Fixes: today's date in the planning prompt (→ "Renew the domain by 2026-11-13") and a deterministic regex cleanup for the rest. Lesson: when the prompt keeps failing on a narrow, mechanical problem, fix it in code.
+  - Test questions without request words ("Write the README") took the fast path and proposed nothing: correct behaviour; the tests were phrased wrongly.
+
 ---
 
 ## 4. Problems we faced: quick reference

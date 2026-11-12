@@ -60,7 +60,7 @@ async def _empty_tables() -> None:
             # All tables in one statement: Postgres refuses to truncate a table that
             # another table's foreign key points at, unless they're truncated together.
             await connection.execute(
-                text("TRUNCATE connectors, documents, chunks, conversations, messages, memories")
+                text("TRUNCATE audit_log, actions, connectors, documents, chunks, conversations, messages, memories")
             )
     finally:
         await engine.dispose()

@@ -1,20 +1,24 @@
 """HTTP routes for grounded answers."""
 
 import logging
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 
+from app.actions.schemas import ActionRead
+from app.actions.service import get_actions
 from app.answers import service
 from app.answers.graph import answer_question
 from app.answers.schemas import AskRequest, AskResponse, CitationRead, MemoryCitationRead
 from app.conversations import service as conversations
+from app.config import Settings, get_settings
 from app.db import SessionDep
 from app.embeddings import Embedder, get_embedder
 from app.jobs import JobQueue, get_job_queue
 from app.llm import LLM, get_llm
-from app.models import Document
+from app.models import Action, Document
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +32,7 @@ async def ask(
     embedder: Annotated[Embedder, Depends(get_embedder)],
     llm: Annotated[LLM, Depends(get_llm)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> AskResponse:
     """Answer a question from your documents, citing the chunks used as [n].
 
@@ -48,7 +53,7 @@ async def ask(
         history = [(m.role, m.content) for m in recent]
 
     answer = await answer_question(
-        session, embedder, llm, request.question, top_k=request.top_k, history=history
+        session, embedder, llm, request.question, top_k=request.top_k, history=history, settings=settings
     )
     # One query for the links of all cited documents (GitHub pages; None for uploads).
     cited_ids = {c.hit.document_id for c in answer.citations}
@@ -92,6 +97,16 @@ async def ask(
         # Deleted between the check above and now.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found")
 
+    proposed_actions = []
+    if answer.proposals:  # saved with the turn; now link them to it (provenance)
+        ids = [uuid.UUID(p["id"]) for p in answer.proposals]
+        await session.execute(
+            update(Action).where(Action.id.in_(ids))
+            .values(conversation_id=turn.conversation_id, message_id=turn.user_message_id)
+        )
+        await session.commit()
+        proposed_actions = [ActionRead.model_validate(a) for a in await get_actions(session, ids)]
+
     # Learn from this turn in the background: the user doesn't wait for it.
     try:
         await job_queue.enqueue_memory_extraction(turn.user_message_id)
@@ -111,4 +126,5 @@ async def ask(
         input_tokens=answer.input_tokens,
         output_tokens=answer.output_tokens,
         timeline=answer.timeline,
+        proposed_actions=proposed_actions,
     )

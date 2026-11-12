@@ -25,6 +25,7 @@ Rules:
 - Use a memory only if it helps answer the question; ignore the others.
 - If the sources and memories contain nothing that answers the question, reply exactly: "{NOT_FOUND_ANSWER}"
 - If they answer only some parts of the question, answer those and say which parts you couldn't find.
+- Proposed actions, if listed, have NOT been done: say what you proposed and that it waits for the user's approval. Never say an action was carried out.
 - If sources disagree, say so and cite each side.
 - If a memory and a source disagree, say so and cite both. A memory is usually more up to date than a document, so lead with the memory.
 - Be concise.
@@ -147,7 +148,10 @@ class Answer:
 
 
 def build_prompt(
-    question: str, hits: list[SearchHit], memories: Sequence[RecalledMemory] = ()
+    question: str,
+    hits: list[SearchHit],
+    memories: Sequence[RecalledMemory] = (),
+    proposals: Sequence[dict] = (),
 ) -> str:
     """Number the sources (and memories) and wrap each in clear delimiters, then ask the question."""
     sections = []
@@ -168,6 +172,9 @@ def build_prompt(
             f"</source>"
         )
     sections.append("Sources:\n\n" + "\n\n".join(blocks) if blocks else "Sources: none")
+    if proposals:
+        listed = "\n".join(f"- {p['summary']}" for p in proposals)
+        sections.append(f"Proposed actions (NOT done yet; each runs only if the user approves it):\n{listed}")
     reminder = _FINAL_REMINDER_WITH_MEMORIES if memories else _FINAL_REMINDER
     return "\n\n".join(sections) + f"\n\nQuestion: {question}\n\n{reminder}"
 

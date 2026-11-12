@@ -7,6 +7,7 @@ workflow that ties them together is graph.py.
 
 import re
 from collections.abc import Iterable, Sequence
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ValidationError
@@ -21,14 +22,24 @@ MAX_QUESTION_CHARS = 1000
 
 # The tools the planner may choose. One source of truth: the JSON schema (Literal) and the
 # prompt's tool list are both built from it, so they can't drift apart.
-ToolName = Literal["search", "list_tasks"]
+ToolName = Literal["search", "list_tasks", "propose_task", "propose_github_issue"]
 TOOL_DESCRIPTIONS: dict[str, str] = {
     "search": "search the user's documents (including synced GitHub issues, pull requests "
     "and commits) and their memories. Use for any question about facts, decisions or history.",
     "list_tasks": "list ALL of the user's open tasks. Use for questions about unfinished, "
     "pending or open tasks, to-dos or what to work on.",
+    "propose_task": "propose adding a task to the user's task list; it runs only after the user "
+    "approves it. Use only when the user asks to add, create or remember a task or to-do. Write "
+    "the step question as the task itself with an absolute date, not as the request: 'Remind me "
+    "to renew the domain on Friday' → 'Renew the domain by 2026-11-20'.",
+    "propose_github_issue": "propose opening an issue in the connected GitHub repository; it "
+    "runs only after the user approves it. Use only when the user asks to open, create or file "
+    "an issue. Write the step question as a short issue title, not as the request: 'Open an "
+    "issue for the login timeout bug' → 'Login times out'.",
 }
-ACTION_TOOLS: set[str] = set()  # tools that create proposals instead of finding evidence
+# Tools that create proposals (awaiting approval) instead of finding evidence. The evidence
+# check never adds these: it sees retrieved text, which could contain injected instructions.
+ACTION_TOOLS = {"propose_task", "propose_github_issue"}
 
 _TOOL_LIST = "\n".join(f"- {name}: {text}" for name, text in TOOL_DESCRIPTIONS.items())
 
@@ -56,7 +67,8 @@ Rules:
 # parts, or for words that need a tool other than plain search. A false alarm costs one
 # call (the planner returns a single search); a miss is answered by plain search, as before.
 _NEEDS_PLANNING = re.compile(
-    r"\?.*\?|[,;]|\b(?:and|also|plus|tasks?|to-?dos?|unfinished|pending|open items|work on)\b",
+    r"\?.*\?|[,;]|\b(?:and|also|plus|tasks?|to-?dos?|unfinished|pending|open items|work on|"
+    r"create|add|remind|issues?)\b",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -104,12 +116,19 @@ def single_search(question: str) -> list[PlanStep]:
     return [PlanStep(question=question, tool="search")]
 
 
-async def plan_steps(llm: LLM, question: str) -> tuple[list[PlanStep], int, int]:
+def planning_prompt(question: str, today: date) -> str:
+    # The date lets the planner turn "by Friday" into an absolute date for task proposals.
+    return f"Today: {today.isoformat()} ({today:%A})\n\nQuestion: {question}"
+
+
+async def plan_steps(
+    llm: LLM, question: str, today: date | None = None
+) -> tuple[list[PlanStep], int, int]:
     """(steps, input tokens, output tokens). Unusable output falls back to one search.
     LLM errors propagate: the caller decides how to degrade."""
     result = await llm.generate(
         system=PLAN_SYSTEM_PROMPT,
-        prompt=f"Question: {question}",
+        prompt=planning_prompt(question, today or date.today()),
         max_output_tokens=400,
         json_schema=Plan.model_json_schema(),
     )

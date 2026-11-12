@@ -45,6 +45,7 @@ from app.answers.service import (
     standalone_question,
 )
 from app.answers.tools import TOOLS, ToolContext
+from app.config import Settings, get_settings
 from app.embeddings import Embedder
 from app.llm import LLM, LLMError
 from app.memory.recall import RecalledMemory
@@ -64,7 +65,7 @@ class AnswerContext:
     session: AsyncSession
     embedder: Embedder
     llm: LLM
-    extra: dict | None = None  # per-request data for tools (e.g. the conversation, Phase 6)
+    settings: Settings
 
 
 class AnswerState(TypedDict, total=False):  # total=False: keys appear as nodes fill them
@@ -170,15 +171,17 @@ async def plan(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
 async def act(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
     """Run every pending step. A failing tool is recorded and skipped, not fatal."""
     ctx = runtime.context
-    tool_ctx = ToolContext(ctx.session, ctx.embedder, state["top_k"], ctx.extra or {})
+    tool_ctx = ToolContext(ctx.session, ctx.embedder, state["top_k"], ctx.settings)
     update: dict = {"hits": [], "memories": [], "proposals": [], "tried": [], "timeline": []}
     for step in state["pending"]:
         started = time.perf_counter()
         try:
-            result = await TOOLS[step.tool](step.question, tool_ctx)
+            # SAVEPOINT: a failing tool undoes only its own changes. A full rollback() would
+            # also discard what earlier tools did in this request (e.g. a proposed action).
+            async with ctx.session.begin_nested():
+                result = await TOOLS[step.tool](step.question, tool_ctx)
         except Exception as exc:  # one broken tool shouldn't sink the whole answer
             logger.exception("Tool %s failed", step.tool)
-            await ctx.session.rollback()  # a failed SQL statement poisons the transaction
             update["tried"].append({"tool": step.tool, "question": step.question, "results": 0})
             update["timeline"].append(event(f"tool:{step.tool}", started, step.question, f"{type(exc).__name__}: {exc}"))
             continue
@@ -231,7 +234,7 @@ async def generate(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
     started = time.perf_counter()
     hits, memories = unique_evidence(state)
     question = question_with_parts(state["search_question"], state["parts"])
-    prompt = build_prompt(question, hits, memories)
+    prompt = build_prompt(question, hits, memories, state.get("proposals", []))
     result = await runtime.context.llm.generate(system=SYSTEM_PROMPT, prompt=prompt)
     return {
         "text": result.text,
@@ -280,7 +283,7 @@ async def answer_question(
     *,
     top_k: int,
     history: Sequence[tuple[str, str]] = (),
-    extra: dict | None = None,
+    settings: Settings | None = None,
 ) -> Answer:
     """Answer from the documents and memories, planning tool steps for complex questions."""
     state = await answer_graph.ainvoke(
@@ -293,7 +296,7 @@ async def answer_question(
             "output_tokens": 0,
         },
         config={"recursion_limit": RECURSION_LIMIT},
-        context=AnswerContext(session=session, embedder=embedder, llm=llm, extra=extra),
+        context=AnswerContext(session=session, embedder=embedder, llm=llm, settings=settings or get_settings()),
     )
     hits, memories = unique_evidence(state)
     parts = state["parts"]

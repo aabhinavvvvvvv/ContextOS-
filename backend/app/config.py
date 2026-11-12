@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # be used to read arbitrary files on the server (e.g. /etc).
     folder_root: Path = REPO_ROOT / "data" / "sources"
 
+    # Actions the agent may propose and the user may approve (Phase 6). Remove a kind to
+    # forbid it, e.g. ALLOWED_ACTIONS=["create_task"].
+    allowed_actions: list[str] = ["create_task", "create_github_issue"]
+
+    # Optional API token. When set, every endpoint except /health* requires the header
+    # "Authorization: Bearer <token>". Leave empty for local single-user use.
+    api_token: SecretStr | None = None
+
     @property
     def redis_url(self) -> str:
         # Fail fast (2s) if Redis is unreachable. No socket_timeout: the worker's
