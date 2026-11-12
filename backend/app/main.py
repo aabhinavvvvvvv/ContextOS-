@@ -29,6 +29,8 @@ from app.jobs import JobQueue, create_saq_queue
 from app.llm import LLMError, LLMNotConfiguredError, LLMRateLimitError
 from app.logging_config import configure_logging
 from app.memory.router import router as memory_router
+from app.observability import record_request
+from app.observability import router as metrics_router
 from app.search.router import router as search_router
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,8 @@ app.include_router(conversations_router)
 app.include_router(memory_router)
 app.include_router(connectors_router)
 app.include_router(actions_router)
+app.include_router(metrics_router)
+app.middleware("http")(record_request)  # latency + status of every request → request_logs
 
 
 # LLM failures can surface from any route that uses the model (and from the get_llm

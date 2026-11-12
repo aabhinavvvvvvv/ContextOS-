@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # and only POST /ask returns 503.
     gemini_api_key: SecretStr | None = None
     llm_model: str = "gemini-3.5-flash-lite"
+    # For the cost estimate in GET /metrics (USD per million tokens). The free tier costs $0;
+    # these defaults are example paid-tier prices (Gemini 2.5 Flash-Lite). Check your
+    # provider's current price list and set them to match.
+    llm_input_usd_per_million: float = 0.10
+    llm_output_usd_per_million: float = 0.40
 
     # GitHub connector. Optional: public repositories sync without a token (60 API
     # requests/hour); a token raises that to 5,000 and is needed to open issues (Phase 6).

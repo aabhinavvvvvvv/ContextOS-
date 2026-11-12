@@ -17,7 +17,8 @@ from app.config import Settings, get_settings
 from app.db import SessionDep
 from app.embeddings import Embedder, get_embedder
 from app.jobs import JobQueue, get_job_queue
-from app.llm import LLM, get_llm
+from app.llm import LLM
+from app.observability import get_metered_llm
 from app.models import Action, Document
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ async def ask(
     request: AskRequest,
     session: SessionDep,
     embedder: Annotated[Embedder, Depends(get_embedder)],
-    llm: Annotated[LLM, Depends(get_llm)],
+    llm: Annotated[LLM, Depends(get_metered_llm)],  # records every call (observability)
     job_queue: Annotated[JobQueue, Depends(get_job_queue)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AskResponse:

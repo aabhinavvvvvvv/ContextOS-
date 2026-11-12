@@ -94,6 +94,7 @@ async def standalone_question(llm: LLM, question: str, history: History) -> Rewr
         return Rewrite(question)  # first question: nothing to resolve, no LLM call
     result = await llm.generate(
         system=REWRITE_SYSTEM_PROMPT,
+        purpose="rewrite",
         prompt=build_rewrite_prompt(question, history),
         max_output_tokens=200,
     )

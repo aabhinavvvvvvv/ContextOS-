@@ -19,6 +19,7 @@ from app.ingestion.service import ingest_document, unfinished_document_ids
 from app.jobs import JobQueue, create_saq_queue
 from app.llm import LLMNotConfiguredError, get_llm
 from app.logging_config import configure_logging
+from app.observability import MeteredLLM
 from app.memory.service import remember_turn, unextracted_turn_ids
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ async def startup(ctx: Context) -> None:
     # Loaded once per worker process and shared by all jobs (ONNX Runtime is thread-safe).
     ctx["embedder"] = Embedder(settings.model_cache_dir)
     try:
-        ctx["llm"] = get_llm()
+        ctx["llm"] = MeteredLLM(get_llm(), ctx["engine"], settings.llm_model)
     except LLMNotConfiguredError:
         # Documents still get ingested without a key; memory extraction waits for one.
         logger.warning("No GEMINI_API_KEY: memory extraction is paused")

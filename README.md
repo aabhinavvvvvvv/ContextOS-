@@ -34,12 +34,14 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     connectors/      sync GitHub repos (issues, PRs, commits; REST API, polling with `since`) and local folders into documents
     conversations/   every /ask turn (question + answer + cited sources), the raw record memory is built from
     memory/          long-term memory: the LLM extracts decisions, preferences, tasks and facts the user states (structured JSON output), stored with embedding and source message; `recall.py` finds the current memories closest to a question
+    observability.py LLM call + request recording (MeteredLLM, middleware) and GET /metrics
     mcp_server.py    MCP server (stdio): search_knowledge, ask, list_open_tasks tools + contextos://memories resource
     llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
     worker.py        background worker process: ingestion and memory-extraction jobs, plus once-a-minute sweeps that re-queue unfinished work
   migrations/        Alembic database migrations
+  evals/             benchmark: 60 scenarios over a fictional project (corpus/, memories.json, run.py); see docs/EVALUATION.md
   tests/             pytest tests (integration tests use a separate contextos_test database)
 data/uploads/        uploaded files, named by SHA-256 (gitignored)
 data/models/         downloaded embedding model, ~65 MB, fetched on first use (gitignored)
@@ -110,6 +112,7 @@ Tools: `search_knowledge`, `ask`, `list_open_tasks`. Resource: `contextos://memo
 | `POST` | `/actions/{id}/approve` | Approve and run it now: `executed` with `result` (new task memory / GitHub issue URL) or `failed` with `error`. 409 if already decided, 403 if its kind isn't in `ALLOWED_ACTIONS` |
 | `POST` | `/actions/{id}/reject` | Reject it; it can never run |
 | `GET` | `/audit?limit=100` | Audit log, newest first: proposals, approvals, executions, memory edits/deletions, connector changes |
+| `GET` | `/metrics?days=7` | LLM calls per purpose (calls, errors, tokens, p50/p95 latency, estimated cost), endpoint latency and 5xx counts, recent errors |
 | `GET` | `/connectors` | Connected sources with `last_status` (`never`/`ok`/`error`), `last_error`, `last_synced_at` |
 | `POST` | `/connectors` `{"kind": "github", "name": "owner/repo"}` or `{"kind": "folder", "name": "notes"}` | Connect a GitHub repository or a folder inside `FOLDER_ROOT` (201; 400 invalid or outside the root; 409 already connected). The first sync is queued at once; the worker re-syncs every 15 minutes. Synced items become documents (`source`, `source_url`), and citations link to them |
 | `POST` | `/connectors/{id}/sync` | Sync now (202) |

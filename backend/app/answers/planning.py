@@ -128,6 +128,7 @@ async def plan_steps(
     LLM errors propagate: the caller decides how to degrade."""
     result = await llm.generate(
         system=PLAN_SYSTEM_PROMPT,
+        purpose="plan",
         prompt=planning_prompt(question, today or date.today()),
         max_output_tokens=400,
         json_schema=Plan.model_json_schema(),
@@ -169,6 +170,7 @@ async def check_evidence(
     """New lookup steps if evidence is missing ([] = enough). Unusable output = enough."""
     result = await llm.generate(
         system=CHECK_SYSTEM_PROMPT,
+        purpose="check",
         prompt=build_check_prompt(question, tried, hits, memories),
         max_output_tokens=300,
         json_schema=Plan.model_json_schema(),

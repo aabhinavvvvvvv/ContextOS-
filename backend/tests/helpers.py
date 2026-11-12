@@ -115,6 +115,7 @@ class FakeLLM:
         prompt: str,
         max_output_tokens: int = 1024,
         json_schema: dict | None = None,
+        purpose: str = "other",
     ) -> LLMResult:
         self.calls.append((system, prompt))
         if json_schema is not None:

@@ -1,0 +1,10 @@
+[
+  {"kind": "decision", "content": "The team decided to use Redis for rate limiting the public API."},
+  {"kind": "decision", "content": "The team moved the mobile app beta from December 1 to December 8 because of the login timeout bug."},
+  {"kind": "preference", "content": "The user prefers answers formatted as bullet points."},
+  {"kind": "task", "content": "The user needs to review Sam's login timeout fix by 2026-11-18."},
+  {"kind": "task", "content": "The user needs to prepare the SOC 2 evidence folder by 2026-12-15."},
+  {"kind": "task", "content": "The user needs to update the onboarding guide with the new VPN steps."},
+  {"kind": "fact", "content": "The user is responsible for the tracking service."},
+  {"kind": "fact", "content": "The user works from Berlin."}
+]

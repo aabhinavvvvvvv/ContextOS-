@@ -235,7 +235,7 @@ async def generate(state: AnswerState, runtime: Runtime[AnswerContext]) -> dict:
     hits, memories = unique_evidence(state)
     question = question_with_parts(state["search_question"], state["parts"])
     prompt = build_prompt(question, hits, memories, state.get("proposals", []))
-    result = await runtime.context.llm.generate(system=SYSTEM_PROMPT, prompt=prompt)
+    result = await runtime.context.llm.generate(system=SYSTEM_PROMPT, prompt=prompt, purpose="answer")
     return {
         "text": result.text,
         "input_tokens": result.input_tokens,

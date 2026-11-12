@@ -1,0 +1,5 @@
+Pricing notes (draft)
+
+Basic plan: $29 per month, includes 500 deliveries.
+Pro plan: $99 per month, includes 5,000 deliveries.
+Enterprise: custom pricing, includes an SLA and a dedicated support engineer.

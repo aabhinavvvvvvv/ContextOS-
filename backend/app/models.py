@@ -317,3 +317,37 @@ class AuditEvent(Base):
     target_type: Mapped[str] = mapped_column(Text)
     target_id: Mapped[str] = mapped_column(Text)
     detail: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+
+
+
+class LlmCall(Base):
+    """One LLM request: what it was for, its size, speed and outcome (observability)."""
+
+    __tablename__ = "llm_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp(), index=True
+    )
+    purpose: Mapped[str] = mapped_column(Text)  # rewrite, plan, check, answer, memory
+    model: Mapped[str] = mapped_column(Text)
+    input_tokens: Mapped[int]
+    output_tokens: Mapped[int]
+    latency_ms: Mapped[int]
+    ok: Mapped[bool]
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class RequestLog(Base):
+    """One HTTP request: route template, status and latency (observability)."""
+
+    __tablename__ = "request_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.clock_timestamp(), index=True
+    )
+    method: Mapped[str] = mapped_column(Text)
+    path: Mapped[str] = mapped_column(Text)  # "/documents/{document_id}", not the concrete URL
+    status: Mapped[int]
+    latency_ms: Mapped[int]

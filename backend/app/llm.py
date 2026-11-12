@@ -65,6 +65,7 @@ class LLM:
         prompt: str,
         max_output_tokens: int = 1024,
         json_schema: dict[str, Any] | None = None,
+        purpose: str = "other",  # what the call is for, for logs and metrics
     ) -> LLMResult:
         """Generate text. With `json_schema`, the reply is JSON constrained to that schema
         ("structured output"). Callers must still validate it: constrained isn't guaranteed."""
@@ -100,8 +101,8 @@ class LLM:
             thinking_tokens=(usage.thoughts_token_count or 0) if usage else 0,
         )
         logger.info(
-            "LLM %s: %d input, %d output, %d thinking tokens",
-            self._model, result.input_tokens, result.output_tokens, result.thinking_tokens,
+            "LLM %s (%s): %d input, %d output, %d thinking tokens",
+            self._model, purpose, result.input_tokens, result.output_tokens, result.thinking_tokens,
         )
         return result
 

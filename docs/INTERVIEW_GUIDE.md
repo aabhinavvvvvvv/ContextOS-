@@ -172,6 +172,17 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
   - **Payloads copied the request** ("Remind me to … by Friday"): the planner didn't know the date and ignored an example. Fixes: today's date in the planning prompt (→ "Renew the domain by 2026-11-13") and a deterministic regex cleanup for the rest. Lesson: when the prompt keeps failing on a narrow, mechanical problem, fix it in code.
   - Test questions without request words ("Write the README") took the fast path and proposed nothing: correct behaviour; the tests were phrased wrongly.
 
+### Phase 8: Evaluation and observability
+- **Built:** recording of every LLM call (purpose, tokens, latency, error) and HTTP request, `GET /metrics` with p50/p95 and estimated cost; a 60-scenario benchmark with offline (retrieval, memory) and live (planning, answers, refusals, citation support) metrics. See `docs/EVALUATION.md`.
+- **How to talk about evaluating an LLM system:** three layers. (1) Deterministic tests with a fake LLM for plumbing. (2) Small targeted live evals per prompt. (3) A benchmark with *separate* metrics for retrieval, memory, tool choice, answer correctness, refusals and **citation support** (does the cited source actually contain the fact?). Retrieval metrics need no LLM, so they're free to run on every change.
+- **Results:** retrieval hit@5 100% (hit@1 84%, MRR 0.908), memory 100%, planning 12/12, answers 13/13, refusals 2/2, citations supported 13/13; p50 1.4 s / p95 4.1 s.
+- **Being honest about it:** the set is small and self-written, so 100% means "handles these cases". Keyword grading is coarse. One run of a nondeterministic model. The misses were the interesting part: heading-based chunking splits *decision* from *reasons* (fine at top-5), and short generic queries rank keyword-repeating chunks first (a reranker's job).
+- **Problems → fixes:**
+  - Alembic's `env.py` calls `asyncio.run()`, which can't run inside an already-running event loop → run migrations before entering the async main.
+  - **`MissingGreenlet` again**, in the eval loader: a default `AsyncSession` expires objects on commit, so reading `document.id` afterwards was hidden I/O. Same root cause as Phase 3, and a reminder that the lesson applies to every new session, not just the API's.
+  - Metrics must not break the request they measure → recording uses its own short transaction and swallows (logs) its own errors.
+  - Grouping requests by the **route template** (`/documents/{document_id}`), not the URL, so metrics aggregate per endpoint.
+
 ---
 
 ## 4. Problems we faced: quick reference

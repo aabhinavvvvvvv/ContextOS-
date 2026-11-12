@@ -112,6 +112,7 @@ async def extract_memories(
     try:
         result = await llm.generate(
             system=EXTRACTION_SYSTEM_PROMPT,
+            purpose="memory",
             prompt=build_extraction_prompt(user_text, answer_text, turn_date, existing),
             max_output_tokens=512,
             json_schema=ExtractionResult.model_json_schema(),

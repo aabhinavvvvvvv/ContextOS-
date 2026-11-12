@@ -1,0 +1,60 @@
+{"id": "r01", "category": "retrieval", "question": "Why did we choose PostgreSQL over MongoDB?", "doc": "adr-001-database.md", "expect": "PostGIS"}
+{"id": "r02", "category": "retrieval", "question": "Which database supports our geospatial queries?", "doc": "adr-001-database.md", "expect": "PostGIS"}
+{"id": "r03", "category": "retrieval", "question": "Why Kafka instead of RabbitMQ?", "doc": "adr-002-queue.md", "expect": "replay"}
+{"id": "r04", "category": "retrieval", "question": "How long are events retained?", "doc": "adr-002-queue.md", "expect": "7 days"}
+{"id": "r05", "category": "retrieval", "question": "How are Kafka partitions keyed?", "doc": "adr-002-queue.md", "expect": "delivery id"}
+{"id": "r06", "category": "retrieval", "question": "When do database backups run?", "doc": "runbook.md", "expect": "02:00 UTC"}
+{"id": "r07", "category": "retrieval", "question": "How do I restart the tracking service?", "doc": "runbook.md", "expect": "rollout restart"}
+{"id": "r08", "category": "retrieval", "question": "When does the on-call rotation change?", "doc": "runbook.md", "expect": "Monday"}
+{"id": "r09", "category": "retrieval", "question": "What caused the September outage?", "doc": "incident-2026-09-30.md", "expect": "TLS certificate"}
+{"id": "r10", "category": "retrieval", "question": "How long was the API down?", "doc": "incident-2026-09-30.md", "expect": "47 minutes"}
+{"id": "r11", "category": "retrieval", "question": "What did we do so certificates don't expire again?", "doc": "incident-2026-09-30.md", "expect": "cert-manager"}
+{"id": "r12", "category": "retrieval", "question": "How many approvals does a pull request need?", "doc": "onboarding.md", "expect": "2 approvals"}
+{"id": "r13", "category": "retrieval", "question": "Which Slack channel does the team chat in?", "doc": "onboarding.md", "expect": "#atlas-dev"}
+{"id": "r14", "category": "retrieval", "question": "What is the branch naming convention?", "doc": "onboarding.md", "expect": "feat/"}
+{"id": "r15", "category": "retrieval", "question": "When is the feature freeze?", "doc": "meeting-2026-10-14.md", "expect": "November 20"}
+{"id": "r16", "category": "retrieval", "question": "Who is fixing the login timeout bug?", "doc": "meeting-2026-10-14.md", "expect": "Sam"}
+{"id": "r17", "category": "retrieval", "question": "Who is the tech lead?", "doc": "team.md", "expect": "Priya"}
+{"id": "r18", "category": "retrieval", "question": "What time is the daily standup?", "doc": "team.md", "expect": "9:30"}
+{"id": "r19", "category": "retrieval", "question": "What is planned for Q4?", "doc": "roadmap.md", "expect": "Route optimization"}
+{"id": "r20", "category": "retrieval", "question": "When is the SOC 2 audit?", "doc": "roadmap.md", "expect": "January"}
+{"id": "r21", "category": "retrieval", "question": "How much does the Pro plan cost?", "doc": "pricing-notes.txt", "expect": "$99"}
+{"id": "r22", "category": "retrieval", "question": "How many deliveries are included in the cheapest plan?", "doc": "pricing-notes.txt", "expect": "500 deliveries"}
+{"id": "r23", "category": "retrieval", "question": "Why is the public API REST and not gRPC?", "doc": "architecture.md", "expect": "client support"}
+{"id": "r24", "category": "retrieval", "question": "Which cloud region do we deploy to?", "doc": "architecture.md", "expect": "europe-west3"}
+{"id": "r25", "category": "retrieval", "question": "What language is the tracking service written in?", "doc": "architecture.md", "expect": "Go"}
+{"id": "m01", "category": "memory", "question": "How do we rate limit the public API?", "expect": "Redis for rate limiting"}
+{"id": "m02", "category": "memory", "question": "How should answers be formatted for me?", "expect": "bullet points"}
+{"id": "m03", "category": "memory", "question": "What code review am I supposed to do?", "expect": "login timeout fix"}
+{"id": "m04", "category": "memory", "question": "What do I need to prepare for the audit?", "expect": "SOC 2 evidence"}
+{"id": "m05", "category": "memory", "question": "Which service am I responsible for?", "expect": "tracking service"}
+{"id": "m06", "category": "memory", "question": "When does the mobile beta start?", "expect": "December 8"}
+{"id": "m07", "category": "memory", "question": "Where am I based?", "expect": "Berlin"}
+{"id": "m08", "category": "memory", "question": "What should change in the onboarding guide?", "expect": "VPN steps"}
+{"id": "p01", "category": "planning", "question": "What did we decide about the database, and what tasks are open?", "tools": ["search", "list_tasks"], "max_steps": 3}
+{"id": "p02", "category": "planning", "question": "What should I work on this week?", "tools": ["list_tasks"], "max_steps": 2}
+{"id": "p03", "category": "planning", "question": "Why did we pick Kafka, and how long are events kept?", "tools": ["search"], "max_steps": 2}
+{"id": "p04", "category": "planning", "question": "Who is on call this week, and how do I restart the tracking service?", "tools": ["search"], "max_steps": 2}
+{"id": "p05", "category": "planning", "question": "Add a task to write the Q4 retro notes.", "tools": ["propose_task"], "max_steps": 1}
+{"id": "p06", "category": "planning", "question": "Open a GitHub issue for the flaky checkout test.", "tools": ["propose_github_issue"], "max_steps": 1}
+{"id": "p07", "category": "planning", "question": "What issues did the incident review raise?", "tools": ["search"], "max_steps": 2}
+{"id": "p08", "category": "planning", "question": "Remind me to check the certificate alerts on Monday.", "tools": ["propose_task"], "max_steps": 1}
+{"id": "p09", "category": "planning", "question": "What's pending for me, and when is the feature freeze?", "tools": ["list_tasks", "search"], "max_steps": 3}
+{"id": "p10", "category": "planning", "question": "Summarise the onboarding guide and list my to-dos.", "tools": ["search", "list_tasks"], "max_steps": 3}
+{"id": "p11", "category": "planning", "question": "Which plan includes 5,000 deliveries and what does it cost?", "tools": ["search"], "max_steps": 2}
+{"id": "p12", "category": "planning", "question": "Create a task to update the runbook, and what does the runbook say about backups?", "tools": ["propose_task", "search"], "max_steps": 3}
+{"id": "a01", "category": "answer", "question": "Why did we choose PostgreSQL over MongoDB?", "expect_any": ["PostGIS", "transaction"], "cite": "source"}
+{"id": "a02", "category": "answer", "question": "What caused the outage on September 30?", "expect_all": ["certificate"], "cite": "source"}
+{"id": "a03", "category": "answer", "question": "When do backups run and how long are they kept?", "expect_all": ["02:00", "30 days"], "cite": "source"}
+{"id": "a04", "category": "answer", "question": "How much is the Pro plan?", "expect_all": ["99"], "cite": "source"}
+{"id": "a05", "category": "answer", "question": "When does the mobile app beta start?", "expect_all": ["December 8"], "cite": "memory"}
+{"id": "a06", "category": "answer", "question": "What is our policy on remote work?", "refusal": true}
+{"id": "a07", "category": "answer", "question": "What is the capital of France?", "refusal": true}
+{"id": "a08", "category": "answer", "question": "Who is the product manager?", "expect_all": ["Ana"], "cite": "source"}
+{"id": "a09", "category": "answer", "question": "What tasks are open for me?", "expect_all": ["SOC 2", "VPN"], "cite": "memory"}
+{"id": "a10", "category": "answer", "question": "How many approvals do pull requests need, and how are branches named?", "expect_all": ["2", "feat/"], "cite": "source"}
+{"id": "a11", "category": "answer", "question": "What did we decide about rate limiting?", "expect_all": ["Redis"], "cite": "memory"}
+{"id": "a12", "category": "answer", "question": "How long does Kafka keep events?", "expect_all": ["7 days"], "cite": "source"}
+{"id": "a13", "category": "answer", "question": "How many deliveries does the Basic plan include?", "expect_all": ["500"], "cite": "source"}
+{"id": "a14", "category": "answer", "question": "Which cloud platform do we deploy on?", "expect_any": ["GKE", "Google Kubernetes Engine"], "cite": "source"}
+{"id": "a15", "category": "answer", "question": "What was done to prevent the certificate outage from happening again?", "expect_any": ["cert-manager", "renew automatically"], "cite": "source"}
