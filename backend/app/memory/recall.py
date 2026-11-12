@@ -8,10 +8,21 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Memory
+
+
+def is_current() -> ColumnElement[bool]:
+    """SQL condition for "still true": not replaced by a newer memory and not expired.
+
+    current_date is Postgres's date (UTC in our container); a memory is still true on the
+    day it expires.
+    """
+    return Memory.superseded_by_id.is_(None) & or_(
+        Memory.expires_on.is_(None), Memory.expires_on >= func.current_date()
+    )
 
 
 @dataclass(frozen=True)
@@ -25,10 +36,10 @@ class RecalledMemory:
 async def related_memories(
     session: AsyncSession, query_vector: list[float], *, limit: int
 ) -> list[RecalledMemory]:
-    """The current (not superseded) memories closest in meaning to the query vector."""
+    """The current memories closest in meaning to the query vector."""
     result = await session.execute(
         select(Memory.id, Memory.kind, Memory.content, Memory.created_at)
-        .where(Memory.superseded_by_id.is_(None))
+        .where(is_current())
         .order_by(Memory.embedding.cosine_distance(query_vector))
         .limit(limit)
     )

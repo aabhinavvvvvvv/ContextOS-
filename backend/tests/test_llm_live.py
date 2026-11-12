@@ -273,3 +273,25 @@ def test_gemini_skips_known_memories_and_marks_replacements() -> None:
             failures.append(user[:40])
 
     assert failures == [], f"{len(failures)}/{len(UPDATE_CASES)} cases failed: {failures}"
+
+
+def test_gemini_sets_an_expiry_only_for_time_bound_memories() -> None:
+    llm = fresh_llm()
+    tuesday = date(2026, 11, 10)
+
+    async def run() -> list:
+        return [
+            await extract_memories(llm, user, "Noted.", tuesday)
+            for user in [
+                "I'm on vacation until Friday, so I won't review any PRs.",
+                "I need to finish the upload tests by Friday.",
+            ]
+        ]
+
+    vacation, deadline = asyncio.run(run())
+    print(f"\nvacation: {vacation}\ndeadline: {deadline}")
+
+    # One fact per memory: "on vacation" and "won't review PRs" may be separate; all end Friday.
+    assert vacation and all(m.expires_on == date(2026, 11, 13) for m in vacation)
+    assert any("vacation" in m.content.lower() for m in vacation)
+    assert [(m.kind, m.expires_on) for m in deadline] == [("task", None)]

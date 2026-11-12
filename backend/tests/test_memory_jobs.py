@@ -137,7 +137,7 @@ def test_a_changed_decision_supersedes_the_old_memory(client: TestClient) -> Non
     # By default only current memories are listed...
     assert [m["content"] for m in client.get("/memories").json()] == ["The team uses Claude."]
     # ...but the old one is kept, pointing at its replacement.
-    new, old = client.get("/memories", params={"include_superseded": True}).json()
+    new, old = client.get("/memories", params={"include_history": True}).json()
     assert old["content"] == "The team uses Gemini."
     assert old["superseded_by_id"] == new["id"]
     assert new["superseded_by_id"] is None

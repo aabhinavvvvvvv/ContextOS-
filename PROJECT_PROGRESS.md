@@ -4,10 +4,11 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 ## Current state
 
-- **Phase:** **Phase 3 in progress** (persistent memory). 3.1–3.5 done (2026-11-12): memories are extracted in the background, deduplicated, superseded when they change, and used (and cited as [Mn]) when answering.
+- **Phase:** **Phase 3 complete** (2026-11-13). Memories are extracted in the background, deduplicated, superseded when they change, expire when time-bound, can be corrected/deleted, and are used (cited as [Mn]) when answering. **Phase 4 (LangGraph) is next.**
 - **Working style (2026-11-12):** personal project, not production. Write the simplest code that covers the full scope; no new hardening layers (locks, race tests, multi-run evals) unless needed for normal single-user use. One live eval run is enough unless results look shaky.
-- **Next step:** Phase 3.6, the last memory step: memory management and expiry. `DELETE /memories/{id}` (the user removes a wrong memory), `PATCH /memories/{id}` (the user corrects one: re-embed the new text), and simple expiry: a nullable `memories.expires_at` that extraction fills for time-bound memories ("until Friday", "this sprint"), excluded from recall once it passes. Keep it simple. Then Phase 3 is complete → Phase 4 (LangGraph).
-- **Phase 3 plan:** 3.1 conversations ✅ → 3.2 working memory (follow-ups) ✅ → 3.3a `memories` table + extraction ✅ → 3.3b extraction as a background job ✅ (semantic facts/decisions/preferences with provenance: source message id, timestamps) → 3.4 dedup and updates (supersede, don't overwrite: `superseded_by`, `valid_from`/`valid_to`) → 3.5 memory retrieval into `/ask` (cited as memory, not documents) → 3.6 expiry/staleness + memory management endpoints (list, edit, delete).
+- **Next step:** Phase 4.0, teach agents and LangGraph before any code (what an agent is vs. a fixed pipeline, tool calling, graphs/nodes/edges, state, conditional edges, cycles + termination, when an agent is unnecessary). Then 4.1: add `langgraph` and rebuild today's `/ask` pipeline as a graph (rewrite → retrieve docs + memories → answer) with **no behaviour change**, all existing tests green. Nodes call our own `app/llm.py` (no LangChain chat-model wrappers), so the provider stays isolated.
+- **Phase 4 plan (draft):** 4.0 theory → 4.1 current pipeline as a LangGraph graph → 4.2 query decomposition (one LLM call splits a multi-part question into sub-questions, JSON output) → 4.3 tools + tool selection (search documents, recall memories, list tasks) → 4.4 evidence check + replanning loop with a step limit (stopping condition) → 4.5 retries/failure handling → 4.6 `/ask` returns the step timeline. Keep each step simple (working style above).
+- **Phase 3 (done):** 3.1 conversations → 3.2 follow-ups → 3.3 extraction (background job) → 3.4 dedup + supersede → 3.5 memories in answers → 3.6 expiry + edit/delete.
 - **Known data issue:** the dev DB's README.md is the 1.5 version (no worker instructions). Re-uploading creates a second, conflicting version. Document versioning/replacement belongs to "resolve outdated information" (Phases 3/5).
 - **Running locally:** Docker Desktop → `docker compose up -d` → from `backend/`: `uv run uvicorn app.main:app --reload` and, in a second terminal, `uv run saq app.worker.worker_settings`.
 
@@ -59,8 +60,12 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 
 - [x] 3.5 Memories in answers (2026-11-12): `/ask` reuses the question's embedding to fetch the 3 closest current memories (`MEMORIES_IN_ANSWER`; new `app/memory/recall.py` with `RecalledMemory` + `related_memories`, split out to avoid an import cycle answers → memory.service → extraction → answers). `build_prompt` adds dated `<memory id="M1" kind=… date=…>` blocks before the sources ("Sources: none" if there are no hits); the system prompt says use a memory only if it helps, and if a memory and a document disagree, say so, cite both, lead with the memory. `[Mn]` citations verified like `[n]` (shared `_cited_numbers`); `strip_citations` also strips `[Mn]`. The model is called when there are memories even with no document hits. Response and assistant messages carry `memory_citations` (JSONB snapshot, migration `47cc28207f8f`). Live check passed first run: memory vs. outdated doc → "switched … to Claude [M1]. (The older document states it uses Gemini [1].)", irrelevant memory ignored, memory-only answer cited [M2], unknown → refusal. 127 tests pass (+5 live).
 
-## Pending (Phase 3: Persistent memory)
-- [ ] 3.6 Memory management (edit, delete) + expiry
+- [x] 3.6 Memory management + expiry (2026-11-13): nullable `memories.expires_on` (DATE, migration `db161509db4b`); extraction prompt: set it to the last day a time-bound memory is true, but never for a task's deadline (an overdue task still matters); `ExtractedMemory.expires_on: date | None` (Gemini accepted the `anyOf [date string, null]` schema). One `is_current()` SQL condition in `recall.py` (not superseded AND not expired, by Postgres `current_date`) used by recall, extraction's existing memories and `GET /memories`; the list's `include_superseded` was renamed `include_history` (covers replaced + expired). `PATCH /memories/{id}` corrects wording (whitespace collapsed, `pattern=r"\S"` rejects blank, re-embedded), `DELETE /memories/{id}` (204) and, if the deleted memory had replaced an older one, the older one becomes current again (undo of a wrong update). Live: "vacation until Friday" on a Tuesday → 2 atomic memories, both `expires_on` 2026-11-13; "finish tests by Friday" → task, no expiry. The first live run failed only because the test expected exactly one memory: fixed the test's assumption, not the prompt. Extraction 8/8 and dedup 5/5 evals rerun after the prompt change: pass. 132 tests pass (+6 live).
+
+## Pending (Phase 4: Agentic workflows)
+- [ ] 4.0 Theory: agents, tool calling, LangGraph concepts
+- [ ] 4.1 Current `/ask` pipeline as a LangGraph graph (no behaviour change)
+- [ ] 4.2–4.6 Decomposition, tool selection, evidence check + replanning, failure handling, step timeline
 
 ## Decisions log
 | Decision | Reason |
@@ -162,6 +167,10 @@ Session-continuity log. A new session should read this file, then CLAUDE.md, the
 | Prioritise simplicity over production hardening (user's request, 2026-11-12) | Personal learning project; finish the whole roadmap with readable code |
 | Memories in answers: top 3 by similarity, no distance cutoff; the model decides relevance | A cutoff needs tuning per model; 3 short memories cost ~60 tokens, and the live check showed an irrelevant one is ignored |
 | Memories cited as `[Mn]`, separate from document `[n]` | The user can tell "you told me this" from "a document says this"; each is verified against what was actually shown |
+| Expiry only for time-bound truths, not task deadlines | "On vacation until Friday" stops being true; "finish by Friday" stays relevant (overdue) until it's done and superseded |
+| Expiry checked at read time (`expires_on >= current_date`), no cleanup job | No background work, nothing deleted; expired memories stay visible as history |
+| Edit in place (`PATCH`) vs. supersede | An edit corrects a wrong extraction (the world didn't change); supersede is for real changes. Keeps the API simple |
+| Hard delete, restoring what the deleted memory had replaced | The user explicitly asked to forget it; deleting a wrong update should undo it |
 | Memory vs. document conflict: say so, cite both, lead with the memory | Memories are dated and superseded when they change, documents can be stale (e.g. the old README); showing both keeps the user in charge |
 
 ## Environment notes

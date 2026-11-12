@@ -4,14 +4,14 @@ import logging
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import Row, func, select, update
+from sqlalchemy import Row, Select, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.embeddings import Embedder
 from app.llm import LLM
 from app.memory.extraction import extract_memories
-from app.memory.recall import related_memories
+from app.memory.recall import is_current, related_memories
 from app.models import Memory, MemoryKind, Message
 
 logger = logging.getLogger(__name__)
@@ -34,35 +34,71 @@ async def unextracted_turn_ids(session: AsyncSession, *, limit: int) -> list[uui
     return list(result.all())
 
 
+def _memory_rows() -> Select:
+    """Memories with the conversation each came from (the fields of MemoryRead)."""
+    return select(
+        Memory.id,
+        Memory.kind,
+        Memory.content,
+        Memory.created_at,
+        Memory.source_message_id,
+        Message.conversation_id,
+        Memory.superseded_by_id,
+        Memory.superseded_at,
+        Memory.expires_on,
+    ).join(Message, Memory.source_message_id == Message.id)
+
+
 async def list_memories(
     session: AsyncSession,
     *,
     limit: int,
     kind: MemoryKind | None = None,
-    include_superseded: bool = False,
+    include_history: bool = False,
 ) -> Sequence[Row]:
-    """Memories newest first, each with the conversation it came from. By default only
-    current ones; with include_superseded, also those a newer memory replaced."""
-    query = (
-        select(
-            Memory.id,
-            Memory.kind,
-            Memory.content,
-            Memory.created_at,
-            Memory.source_message_id,
-            Message.conversation_id,
-            Memory.superseded_by_id,
-            Memory.superseded_at,
-        )
-        .join(Message, Memory.source_message_id == Message.id)
-        .order_by(Memory.created_at.desc(), Memory.id)
-        .limit(limit)
-    )
+    """Memories newest first. By default only current ones; with include_history, also
+    those a newer memory replaced and those that expired."""
+    query = _memory_rows().order_by(Memory.created_at.desc(), Memory.id).limit(limit)
     if kind is not None:
         query = query.where(Memory.kind == kind)
-    if not include_superseded:
-        query = query.where(Memory.superseded_by_id.is_(None))
+    if not include_history:
+        query = query.where(is_current())
     return (await session.execute(query)).all()
+
+
+async def get_memory(session: AsyncSession, memory_id: uuid.UUID) -> Row | None:
+    return (await session.execute(_memory_rows().where(Memory.id == memory_id))).one_or_none()
+
+
+async def edit_memory(
+    session: AsyncSession, embedder: Embedder, memory_id: uuid.UUID, content: str
+) -> Row | None:
+    """Correct a memory's wording (None if it doesn't exist). The embedding is recomputed,
+    so the memory is found by its new meaning."""
+    [vector] = await run_in_threadpool(embedder.embed_passages, [content])
+    result = await session.execute(
+        update(Memory).where(Memory.id == memory_id).values(content=content, embedding=vector)
+    )
+    if result.rowcount == 0:
+        return None
+    await session.commit()
+    return await get_memory(session, memory_id)
+
+
+async def delete_memory(session: AsyncSession, memory_id: uuid.UUID) -> bool:
+    """Forget a memory (False if it doesn't exist).
+
+    A memory it had replaced becomes current again, so deleting a wrong update undoes it
+    ("switched to Claude" deleted → "keep Gemini" is back).
+    """
+    await session.execute(
+        update(Memory)
+        .where(Memory.superseded_by_id == memory_id)
+        .values(superseded_by_id=None, superseded_at=None)
+    )
+    result = await session.execute(delete(Memory).where(Memory.id == memory_id))
+    await session.commit()
+    return result.rowcount > 0
 
 
 async def remember_turn(
@@ -117,6 +153,7 @@ async def remember_turn(
                 id=uuid.uuid4(),
                 kind=m.kind,
                 content=m.content,
+                expires_on=m.expires_on,
                 embedding=vector,
                 source_message_id=locked.id,
             )

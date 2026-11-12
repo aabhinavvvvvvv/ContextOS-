@@ -6,7 +6,7 @@ then review the generated file before running `uv run alembic upgrade head`.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal, get_args
 
 from pgvector.sqlalchemy import Vector
@@ -14,6 +14,7 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -221,3 +222,6 @@ class Memory(Base):
         ForeignKey("memories.id", ondelete="SET NULL")
     )
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Time-bound memories ("on vacation this week"): the last day they are true. After it,
+    # the memory is no longer recalled. NULL = true until something replaces it.
+    expires_on: Mapped[date | None] = mapped_column(Date)
