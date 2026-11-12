@@ -18,3 +18,6 @@ class MemoryRead(BaseModel):
     # Provenance: the user message (and its conversation) this memory was extracted from.
     source_message_id: uuid.UUID
     conversation_id: uuid.UUID
+    # Null while current; otherwise the newer memory that replaced this one, and when.
+    superseded_by_id: uuid.UUID | None
+    superseded_at: datetime | None

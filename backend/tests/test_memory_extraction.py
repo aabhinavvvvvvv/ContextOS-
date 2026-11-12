@@ -44,9 +44,26 @@ def test_extraction_prompt_dates_the_turn_and_strips_old_citations() -> None:
     # The date lets the model turn "by Friday" into a date that stays true later.
     assert prompt == (
         "Date of this turn: 2026-11-10 (Tuesday)\n\n"
+        "Existing memories: none\n\n"
         "<user_message>\nWe picked REST.\n</user_message>\n\n"
         "<assistant_answer>\nNoted.\n</assistant_answer>"
     )
+
+
+def test_extraction_prompt_numbers_the_existing_memories() -> None:
+    prompt = build_extraction_prompt(
+        "We switched to Claude.", "Noted.", TURN_DATE, ["The team uses Gemini.", "The user likes REST."]
+    )
+
+    assert "Existing memories:\n[1] The team uses Gemini.\n[2] The user likes REST.\n\n" in prompt
+
+
+def test_replaces_keeps_only_existing_numbers() -> None:
+    raw = '{"memories": [{"kind": "decision", "content": "The team uses Claude.", "replaces": [1, 7, 1, 0]}]}'
+
+    [memory] = parse_memories(raw, existing_count=2)
+
+    assert memory.replaces == [1]  # 7 and 0 don't exist; the repeated 1 is kept once
 
 
 def test_parse_memories_cleans_deduplicates_and_caps() -> None:

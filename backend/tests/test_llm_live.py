@@ -169,7 +169,7 @@ MEMORY_CASES = [
     (
         "Our team is three engineers, and I'm the one responsible for the backend.",
         "I couldn't find this in your documents.",
-        None,
+        2,  # one fact per memory: team size and role are separate facts
         [("fact", [["three", "3"]]), ("fact", [["backend"]])],
         [],
     ),
@@ -206,3 +206,41 @@ def test_gemini_extracts_only_what_is_worth_remembering() -> None:
             failures.append(user[:40])
 
     assert failures == [], f"{len(failures)}/{len(MEMORY_CASES)} cases failed: {failures}"
+
+
+# Dedup / update eval: (existing memories, user message, expected outcome).
+#   "duplicate": nothing new; "update": one memory that replaces [1]; "add": new memory, replaces nothing.
+GEMINI = "The team decided to keep Gemini as their LLM because the free tier is enough."
+UPDATE_CASES = [
+    ([GEMINI], "Just to confirm, we are staying with Gemini for now. Any notes on its setup?", "duplicate"),
+    ([GEMINI], "We switched the LLM provider from Gemini to Claude last week.", "update"),
+    (["The user prefers short answers."], "Actually, I want detailed answers with examples from now on.", "update"),
+    (["The user needs to finish the upload tests by 2026-11-13."], "I finished the upload tests today. What should I test next?", "update"),
+    (["The user prefers short answers."], "We decided to use SAQ for background jobs.", "add"),
+]
+
+
+def test_gemini_skips_known_memories_and_marks_replacements() -> None:
+    llm = fresh_llm()
+
+    async def run() -> list:
+        return [
+            await extract_memories(llm, user, "Noted.", date(2026, 11, 12), existing)
+            for existing, user, _ in UPDATE_CASES
+        ]
+
+    failures = []
+    for (_, user, expected), memories in zip(UPDATE_CASES, asyncio.run(run()), strict=True):
+        replaced = [m.replaces for m in memories]
+        ok = {
+            "duplicate": memories == [],
+            "update": len(memories) == 1 and replaced == [[1]],
+            "add": len(memories) >= 1 and all(r == [] for r in replaced),
+        }[expected]
+        print(f"\n{'ok  ' if ok else 'FAIL'} [{expected}] {user[:60]!r}")
+        for m in memories:
+            print(f"       {m.kind:<10} replaces={m.replaces} {m.content}")
+        if not ok:
+            failures.append(user[:40])
+
+    assert failures == [], f"{len(failures)}/{len(UPDATE_CASES)} cases failed: {failures}"

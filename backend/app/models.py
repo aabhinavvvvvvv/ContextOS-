@@ -211,3 +211,9 @@ class Memory(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    # Set when a newer memory replaces this one ("keep Gemini" → "switched to Claude").
+    # The old memory is kept, not deleted, so past beliefs stay visible. NULL = still current.
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("memories.id", ondelete="SET NULL")
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

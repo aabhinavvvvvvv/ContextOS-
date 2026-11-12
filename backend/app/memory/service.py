@@ -4,7 +4,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import Row, func, select
+from sqlalchemy import Row, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -14,6 +14,21 @@ from app.memory.extraction import extract_memories
 from app.models import Memory, MemoryKind, Message
 
 logger = logging.getLogger(__name__)
+
+RELATED_MEMORIES = 5  # current memories shown to the extractor, so it can skip or replace them
+
+
+async def related_memories(
+    session: AsyncSession, query_vector: list[float], *, limit: int
+) -> Sequence[Row]:
+    """The current (not superseded) memories closest in meaning to the query vector."""
+    result = await session.execute(
+        select(Memory.id, Memory.content)
+        .where(Memory.superseded_by_id.is_(None))
+        .order_by(Memory.embedding.cosine_distance(query_vector))
+        .limit(limit)
+    )
+    return result.all()
 
 
 async def unextracted_turn_ids(session: AsyncSession, *, limit: int) -> list[uuid.UUID]:
@@ -32,9 +47,14 @@ async def unextracted_turn_ids(session: AsyncSession, *, limit: int) -> list[uui
 
 
 async def list_memories(
-    session: AsyncSession, *, limit: int, kind: MemoryKind | None = None
+    session: AsyncSession,
+    *,
+    limit: int,
+    kind: MemoryKind | None = None,
+    include_superseded: bool = False,
 ) -> Sequence[Row]:
-    """Memories newest first, each with the conversation it came from."""
+    """Memories newest first, each with the conversation it came from. By default only
+    current ones; with include_superseded, also those a newer memory replaced."""
     query = (
         select(
             Memory.id,
@@ -43,6 +63,8 @@ async def list_memories(
             Memory.created_at,
             Memory.source_message_id,
             Message.conversation_id,
+            Memory.superseded_by_id,
+            Memory.superseded_at,
         )
         .join(Message, Memory.source_message_id == Message.id)
         .order_by(Memory.created_at.desc(), Memory.id)
@@ -50,6 +72,8 @@ async def list_memories(
     )
     if kind is not None:
         query = query.where(Memory.kind == kind)
+    if not include_superseded:
+        query = query.where(Memory.superseded_by_id.is_(None))
     return (await session.execute(query)).all()
 
 
@@ -74,10 +98,18 @@ async def remember_turn(
                 Message.position == question.position + 1,
             )
         )
+        # The current memories closest to what the user said: the model sees them, so it
+        # can skip what's already known and say which ones a new memory replaces.
+        query_vector = await run_in_threadpool(embedder.embed_query, question.content)
+        existing = await related_memories(session, query_vector, limit=RELATED_MEMORIES)
 
     # 2. Ask the model (slow, may fail), then embed what it found.
     memories = await extract_memories(
-        llm, question.content, answer.content if answer else "", question.created_at.date()
+        llm,
+        question.content,
+        answer.content if answer else "",
+        question.created_at.date(),
+        existing=[row.content for row in existing],
     )
     vectors = (
         await run_in_threadpool(embedder.embed_passages, [m.content for m in memories])
@@ -92,10 +124,22 @@ async def remember_turn(
         locked = await session.get(Message, user_message_id, with_for_update=True)
         if locked is None or locked.memories_extracted_at is not None:
             return 0
-        session.add_all(
-            Memory(kind=m.kind, content=m.content, embedding=vector, source_message_id=locked.id)
-            for m, vector in zip(memories, vectors, strict=True)
-        )
+        for m, vector in zip(memories, vectors, strict=True):
+            memory = Memory(
+                id=uuid.uuid4(),
+                kind=m.kind,
+                content=m.content,
+                embedding=vector,
+                source_message_id=locked.id,
+            )
+            session.add(memory)
+            await session.flush()  # INSERT now, so the old memory's foreign key can point at it
+            for number in m.replaces:  # e.g. [1] = the first existing memory shown to the model
+                await session.execute(
+                    update(Memory)
+                    .where(Memory.id == existing[number - 1].id)
+                    .values(superseded_by_id=memory.id, superseded_at=func.now())
+                )
         locked.memories_extracted_at = func.now()
         await session.commit()
 

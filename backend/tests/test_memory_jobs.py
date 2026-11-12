@@ -111,6 +111,45 @@ def test_memories_are_listed_newest_first_with_provenance(client: TestClient) ->
     assert memories[1]["source_message_id"] == user_message_id(client, older)
 
 
+def remember_with(message_id: str, llm: FakeLLM) -> None:
+    async def run() -> None:
+        engine = create_db_engine(get_settings())
+        try:
+            await remember_turn(engine, llm, FakeEmbedder(), uuid.UUID(message_id))
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+def test_a_changed_decision_supersedes_the_old_memory(client: TestClient) -> None:
+    first = user_message_id(client, ask(client, "We use Gemini.")["conversation_id"])
+    remember(first, ("decision", "The team uses Gemini."))
+
+    second = user_message_id(client, ask(client, "We switched to Claude.")["conversation_id"])
+    llm = FakeLLM(
+        '{"memories": [{"kind": "decision", "content": "The team uses Claude.", "replaces": [1]}]}'
+    )
+    remember_with(second, llm)
+
+    # The model was shown the existing memory, numbered, so it could say what it replaces.
+    assert "[1] The team uses Gemini." in llm.calls[0][1]
+    # By default only current memories are listed...
+    assert [m["content"] for m in client.get("/memories").json()] == ["The team uses Claude."]
+    # ...but the old one is kept, pointing at its replacement.
+    new, old = client.get("/memories", params={"include_superseded": True}).json()
+    assert old["content"] == "The team uses Gemini."
+    assert old["superseded_by_id"] == new["id"]
+    assert new["superseded_by_id"] is None
+
+    # A superseded memory is never shown to the model again.
+    third = user_message_id(client, ask(client, "Any news?")["conversation_id"])
+    later_llm = FakeLLM('{"memories": []}')
+    remember_with(third, later_llm)
+    assert "The team uses Gemini." not in later_llm.calls[0][1]
+    assert "[1] The team uses Claude." in later_llm.calls[0][1]
+
+
 def test_memories_can_be_filtered_by_kind(client: TestClient) -> None:
     conversation_id = ask(client, "We use REST, and keep answers short.")["conversation_id"]
     remember(
