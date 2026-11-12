@@ -29,8 +29,10 @@ backend/             FastAPI application (Python 3.12, managed by uv)
     answers/         RAG: retrieve (hybrid search + relevant memories) → grounded prompt → LLM → verified citations;
                      graph.py: the LangGraph agent (rewrite → plan → act ⇄ check → generate / not_found);
                      planning.py: tool choice + evidence check (LLM, JSON); tools.py: search, list_tasks
+    connectors/      sync GitHub repos (issues, PRs, commits; REST API, polling with `since`) and local folders into documents
     conversations/   every /ask turn (question + answer + cited sources), the raw record memory is built from
     memory/          long-term memory: the LLM extracts decisions, preferences, tasks and facts the user states (structured JSON output), stored with embedding and source message; `recall.py` finds the current memories closest to a question
+    mcp_server.py    MCP server (stdio): search_knowledge, ask, list_open_tasks tools + contextos://memories resource
     llm.py           LLM client (Google Gemini via google-genai); the only module that knows the provider
     embeddings.py    local embedding model (fastembed, BAAI/bge-small-en-v1.5, 384 dims)
     jobs.py          Redis job queue (SAQ); the only place the API touches the queue library
@@ -68,6 +70,17 @@ uv run saq app.worker.worker_settings
 
 Uploads are saved immediately and ingested by the worker; after each `/ask`, the worker also extracts memories from the turn (needs `GEMINI_API_KEY`). If the worker is stopped, jobs wait in Redis. If a job never reached Redis, the worker's startup and once-a-minute sweep re-queue every document the database still marks `pending` or `processing`.
 
+## MCP server
+
+ContextOS can be used from any MCP client (Claude Desktop, IDE assistants). The client starts it over stdio:
+
+```json
+{"mcpServers": {"contextos": {"command": "wsl", "args": ["-d", "Ubuntu-24.04", "--", "bash", "-lc",
+  "cd ~/personal_projects/contextOS/backend && uv run python -m app.mcp_server"]}}}
+```
+
+Tools: `search_knowledge`, `ask`, `list_open_tasks`. Resource: `contextos://memories`. Read-only by design.
+
 ## API
 
 | Method | Path | Description |
@@ -84,6 +97,10 @@ Uploads are saved immediately and ingested by the worker; after each `/ask`, the
 | `GET` | `/memories?limit=50&kind=decision&include_history=false` | Current long-term memories, newest first, with `source_message_id` and `conversation_id` (where each was learned). `kind`: `fact`, `decision`, `preference`, `task`. `include_history=true` also lists replaced memories (`superseded_by_id` / `superseded_at`) and expired ones (`expires_on` in the past). Extracted by the worker a few seconds after each `/ask` |
 | `PATCH` | `/memories/{id}` `{"content": "..."}` | Correct a memory's wording (re-embedded). 404 if unknown, 422 if blank |
 | `DELETE` | `/memories/{id}` | Forget a memory (204). If it had replaced an older memory, that one becomes current again. 404 if unknown |
+| `GET` | `/connectors` | Connected sources with `last_status` (`never`/`ok`/`error`), `last_error`, `last_synced_at` |
+| `POST` | `/connectors` `{"kind": "github", "name": "owner/repo"}` or `{"kind": "folder", "name": "notes"}` | Connect a GitHub repository or a folder inside `FOLDER_ROOT` (201; 400 invalid or outside the root; 409 already connected). The first sync is queued at once; the worker re-syncs every 15 minutes. Synced items become documents (`source`, `source_url`), and citations link to them |
+| `POST` | `/connectors/{id}/sync` | Sync now (202) |
+| `DELETE` | `/connectors/{id}` | Disconnect and delete everything it synced (204) |
 | `GET` | `/search?q=...&limit=5&mode=hybrid` | Search chunks, best first, with citation fields. `mode=hybrid` (default): semantic + keyword merged by Reciprocal Rank Fusion, with each method's rank. `mode=semantic`: closest in meaning (score = cosine similarity). `mode=keyword`: Postgres full-text search with stemming, `"phrases"`, `or`, `-exclude` (score = ts_rank). Scores are only comparable within one mode. |
 
 ```bash

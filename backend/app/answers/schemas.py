@@ -22,6 +22,7 @@ class CitationRead(BaseModel):
     heading: str | None
     page_number: int | None
     text: str
+    source_url: str | None = None  # link to the original, for connector documents
 
 
 class MemoryCitationRead(BaseModel):

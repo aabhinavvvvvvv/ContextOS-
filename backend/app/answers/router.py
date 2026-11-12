@@ -4,6 +4,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 
 from app.answers import service
 from app.answers.graph import answer_question
@@ -13,6 +14,7 @@ from app.db import SessionDep
 from app.embeddings import Embedder, get_embedder
 from app.jobs import JobQueue, get_job_queue
 from app.llm import LLM, get_llm
+from app.models import Document
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,11 @@ async def ask(
     answer = await answer_question(
         session, embedder, llm, request.question, top_k=request.top_k, history=history
     )
+    # One query for the links of all cited documents (GitHub pages; None for uploads).
+    cited_ids = {c.hit.document_id for c in answer.citations}
+    urls = dict((await session.execute(
+        select(Document.id, Document.source_url).where(Document.id.in_(cited_ids))
+    )).all()) if cited_ids else {}
     citations = [
         CitationRead(
             number=c.number,
@@ -57,6 +64,7 @@ async def ask(
             heading=c.hit.heading,
             page_number=c.hit.page_number,
             text=c.hit.text,
+            source_url=urls.get(c.hit.document_id),
         )
         for c in answer.citations
     ]

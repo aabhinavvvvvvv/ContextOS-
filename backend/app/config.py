@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     llm_model: str = "gemini-3.5-flash-lite"
 
+    # GitHub connector. Optional: public repositories sync without a token (60 API
+    # requests/hour); a token raises that to 5,000 and is needed to open issues (Phase 6).
+    github_token: SecretStr | None = None
+    github_api_url: str = "https://api.github.com"
+    # Folder connector: only folders inside this root can be synced, so the API can never
+    # be used to read arbitrary files on the server (e.g. /etc).
+    folder_root: Path = REPO_ROOT / "data" / "sources"
+
     @property
     def redis_url(self) -> str:
         # Fail fast (2s) if Redis is unreachable. No socket_timeout: the worker's

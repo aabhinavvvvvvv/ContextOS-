@@ -23,8 +23,8 @@ MAX_QUESTION_CHARS = 1000
 # prompt's tool list are both built from it, so they can't drift apart.
 ToolName = Literal["search", "list_tasks"]
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "search": "search the user's documents and their memories. Use for any question about "
-    "facts, decisions or history.",
+    "search": "search the user's documents (including synced GitHub issues, pull requests "
+    "and commits) and their memories. Use for any question about facts, decisions or history.",
     "list_tasks": "list ALL of the user's open tasks. Use for questions about unfinished, "
     "pending or open tasks, to-dos or what to work on.",
 }

@@ -30,6 +30,9 @@ TEST_UPLOAD_DIR = Path(tempfile.mkdtemp(prefix="contextos-test-uploads-"))
 os.environ["POSTGRES_DB"] = "contextos_test"
 os.environ["UPLOAD_DIR"] = str(TEST_UPLOAD_DIR)
 os.environ["QUEUE_NAME"] = "contextos-test"
+TEST_FOLDER_ROOT = Path(tempfile.mkdtemp(prefix="contextos-test-sources-"))
+os.environ["FOLDER_ROOT"] = str(TEST_FOLDER_ROOT)
+os.environ["GITHUB_TOKEN"] = ""  # tests never use a real token
 
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
@@ -57,7 +60,7 @@ async def _empty_tables() -> None:
             # All tables in one statement: Postgres refuses to truncate a table that
             # another table's foreign key points at, unless they're truncated together.
             await connection.execute(
-                text("TRUNCATE documents, chunks, conversations, messages, memories")
+                text("TRUNCATE connectors, documents, chunks, conversations, messages, memories")
             )
     finally:
         await engine.dispose()

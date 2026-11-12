@@ -78,9 +78,14 @@ class InlineJobQueue:
         self.engine = engine
         self.embedder = embedder
         self.memory_message_ids: list[uuid.UUID] = []
+        self.connector_ids: list[uuid.UUID] = []
 
     async def enqueue_memory_extraction(self, message_id: uuid.UUID) -> bool:
         self.memory_message_ids.append(message_id)
+        return True
+
+    async def enqueue_connector_sync(self, connector_id: uuid.UUID) -> bool:
+        self.connector_ids.append(connector_id)  # tests call sync_connector directly
         return True
 
     async def enqueue_ingestion(self, document_id: uuid.UUID) -> bool:

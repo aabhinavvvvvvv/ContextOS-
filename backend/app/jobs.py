@@ -14,6 +14,7 @@ from app.config import Settings
 # Must match the function names in app/worker.py.
 INGEST_DOCUMENT_JOB = "ingest_document_job"
 REMEMBER_TURN_JOB = "remember_turn_job"
+SYNC_CONNECTOR_JOB = "sync_connector_job"
 
 
 def create_saq_queue(settings: Settings) -> Queue:
@@ -51,6 +52,17 @@ class JobQueue:
             # worker's once-a-minute sweep, which re-queues every unextracted turn.
             retries=2,
             retry_delay=5.0,
+        )
+        return job is not None
+
+    async def enqueue_connector_sync(self, connector_id: uuid.UUID) -> bool:
+        """Queue a sync of one connector (GitHub repo or folder)."""
+        job = await self.queue.enqueue(
+            SYNC_CONNECTOR_JOB,
+            connector_id=str(connector_id),
+            key=f"sync:{connector_id}",  # one sync per connector at a time
+            timeout=900,  # fetch + ingest up to ~80 items
+            retries=1,  # failures are recorded on the connector; the schedule retries
         )
         return job is not None
 

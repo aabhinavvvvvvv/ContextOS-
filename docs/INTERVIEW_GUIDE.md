@@ -140,6 +140,22 @@ FastAPI ── /ask ──► LangGraph agent: rewrite → plan → act (tools) 
   - A failed SQL statement poisons the session's transaction, so the next tool would fail too → `rollback()` after a tool error.
   - A script run from `/tmp` couldn't `import app` (Python puts the *script's* directory on the import path) → `PYTHONPATH=.`.
 
+### Phase 5: Live data connectors and MCP
+- **Built:** GitHub connector (issues, PRs, commits) and folder connector, synced into ordinary documents, so hybrid search, citations and the agent work on them with no new retrieval code. Also an MCP server exposing ContextOS to other AI apps.
+- **Key decisions:**
+  - **Polling with `since`, not webhooks:** webhooks need a public URL (impossible on a laptop) plus signature checks; polling every 15 minutes with `since=last sync` costs about 2 requests per repo.
+  - **Stable `source_key` per item** (`github:owner/repo#12`): a changed item *replaces* its document (old chunks cascade away); an unchanged one is skipped by SHA-256. The same "stale data" idea as memory supersession.
+  - **`since` = the sync's start time**, not its end, so items updated *during* a sync are fetched again next time instead of being missed.
+  - **Folder sandbox:** only paths inside `FOLDER_ROOT`, checked after `resolve()` (which follows `..` and symlinks), so the API can't read `/etc/passwd`.
+  - **Sync errors are recorded, not raised:** `last_status`/`last_error` on the connector; the schedule retries. A rate limit is surfaced with its reset time.
+  - **MCP server is read-only:** writes go through Phase 6's approval flow. MCP basics: client ↔ server over stdio/HTTP; *tools* are called by the model, *resources* are read by the application.
+- **Problems → fixes:**
+  - **MCP SDK 2.x renamed `FastMCP` to `MCPServer`:** caught at import; inspected the installed API instead of trusting memory (same lesson as google-genai 3.0).
+  - Alembic autogenerate missed a new CHECK constraint on an existing table → added by hand; verified with downgrade/upgrade and `alembic check`.
+  - Testing an external API without the network → injectable HTTP transport (`httpx2.MockTransport`) and a fake GitHub that records requests (also proves `since` is sent on the second sync).
+  - Inline shell variables came out empty again (`$f` in `wsl bash -c '...'`) → scripts for anything with variables.
+- **Result:** a real sync of the project's own public repo: 30 commits → 30 searchable documents.
+
 ---
 
 ## 4. Problems we faced: quick reference

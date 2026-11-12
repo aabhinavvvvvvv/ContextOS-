@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.answers.router import router as answers_router
 from app.config import get_settings
+from app.connectors.router import router as connectors_router
 from app.conversations.router import router as conversations_router
 from app.db import create_db_engine, get_engine
 from app.documents.router import router as documents_router
@@ -52,6 +53,7 @@ app.include_router(search_router)
 app.include_router(answers_router)
 app.include_router(conversations_router)
 app.include_router(memory_router)
+app.include_router(connectors_router)
 
 
 # LLM failures can surface from any route that uses the model (and from the get_llm

@@ -47,8 +47,32 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+class Connector(Base):
+    """A data source synced into documents: a GitHub repository or a local folder."""
+
+    __tablename__ = "connectors"
+    __table_args__ = (
+        CheckConstraint("kind IN ('github', 'folder')", name="kind_valid"),
+        CheckConstraint("last_status IN ('never', 'ok', 'error')", name="last_status_valid"),
+        UniqueConstraint("kind", "name"),  # the same repo/folder can't be added twice
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)  # "owner/repo" or the folder's relative path
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Start time of the last successful sync: the next GitHub sync asks only for items
+    # updated since then ("since" polling).
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(Text, default="never", server_default="never")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    documents_changed: Mapped[int] = mapped_column(default=0, server_default="0")  # last sync
+
+
 class Document(Base):
-    """An uploaded file and the state of its ingestion pipeline."""
+    """A file (uploaded, or produced by a connector) and the state of its ingestion pipeline."""
 
     __tablename__ = "documents"
     __table_args__ = (
@@ -56,6 +80,7 @@ class Document(Base):
             "status IN ('pending', 'processing', 'ready', 'failed')",
             name="status_valid",
         ),
+        CheckConstraint("source IN ('upload', 'github', 'folder')", name="source_valid"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -71,6 +96,15 @@ class Document(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    # Where it came from. Connector items have a stable key ("github:owner/repo#12"):
+    # when the item changes, the document with that key is replaced, never duplicated.
+    source: Mapped[str] = mapped_column(Text, default="upload", server_default="upload")
+    source_key: Mapped[str | None] = mapped_column(Text, unique=True)
+    source_url: Mapped[str | None] = mapped_column(Text)  # link to the original (GitHub page)
+    # CASCADE: removing a connector removes everything it synced.
+    connector_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("connectors.id", ondelete="CASCADE"), index=True
     )
 
 

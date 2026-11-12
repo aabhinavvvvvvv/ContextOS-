@@ -20,6 +20,9 @@ class DocumentRead(BaseModel):
     error: str | None
     created_at: datetime
     updated_at: datetime
+    source: Literal["upload", "github", "folder"] = "upload"
+    source_url: str | None = None  # e.g. the GitHub issue page
+    connector_id: uuid.UUID | None = None
 
 
 class ChunkRead(BaseModel):

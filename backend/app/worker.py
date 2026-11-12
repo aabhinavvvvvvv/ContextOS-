@@ -12,6 +12,7 @@ from saq import CronJob
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.connectors.service import list_connectors, sync_connector
 from app.db import create_db_engine
 from app.embeddings import Embedder
 from app.ingestion.service import ingest_document, unfinished_document_ids
@@ -81,6 +82,19 @@ async def remember_turn_job(ctx: Context, *, message_id: str) -> int:
     return await remember_turn(ctx["engine"], ctx["llm"], ctx["embedder"], uuid.UUID(message_id))
 
 
+async def sync_connector_job(ctx: Context, *, connector_id: str) -> int:
+    return await sync_connector(ctx["engine"], ctx["embedder"], ctx["settings"], uuid.UUID(connector_id))
+
+
+async def enqueue_connector_syncs(ctx: Context) -> None:
+    """Every 15 minutes: poll every connected source for changes."""
+    async with AsyncSession(ctx["engine"]) as session:
+        connectors = await list_connectors(session)
+    job_queue = JobQueue(ctx["worker"].queue)
+    for connector in connectors:
+        await job_queue.enqueue_connector_sync(connector.id)
+
+
 async def enqueue_unextracted_turns(ctx: Context) -> None:
     """Queue memory extraction for turns that don't have it yet, a few per run.
 
@@ -101,11 +115,14 @@ async def enqueue_unextracted_turns(ctx: Context) -> None:
 
 worker_settings = {
     "queue": create_saq_queue(get_settings()),
-    "functions": [ingest_document_job, remember_turn_job],
-    # Every minute: safety nets for work whose job was lost or never enqueued.
+    "functions": [ingest_document_job, remember_turn_job, sync_connector_job],
     "cron_jobs": [
+        # Every minute: safety nets for work whose job was lost or never enqueued.
         CronJob(enqueue_unfinished_documents, cron="* * * * *"),
         CronJob(enqueue_unextracted_turns, cron="* * * * *"),
+        # Every 15 minutes: poll connected sources (GitHub allows 60 requests/hour without
+        # a token; 2 requests per repo per sync stays well inside it).
+        CronJob(enqueue_connector_syncs, cron="*/15 * * * *"),
     ],
     "concurrency": 2,
     "startup": startup,
